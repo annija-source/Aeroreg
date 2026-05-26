@@ -2,9 +2,9 @@
 import React from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, FileText, GitCompare, ChevronLeft, ChevronRight, Plane, Users, Database, ScrollText, BookOpen } from 'lucide-react';
-import { useRole } from '@/contexts/RoleContext';
 import { LayoutDashboard, FileText, GitCompare, ChevronLeft, ChevronRight, Plane, Users, Database, ScrollText, BookOpen, ShieldCheck } from 'lucide-react';
+import { useRole } from '@/contexts/RoleContext';
+
 
 type NavItem = {
   label: string;
