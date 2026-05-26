@@ -32,18 +32,35 @@ async function extractPdfText(filePath: string): Promise<{ text: string; error?:
   }
 
   try {
-    // Polyfill DOMMatrix for pdf-parse in Next.js serverless environment
-    if (typeof globalThis.DOMMatrix === 'undefined') {
-      (globalThis as any).DOMMatrix = class DOMMatrix {
-        constructor() {}
-      };
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    // Use pdfjs-dist which works reliably in Next.js serverless
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+
+    const loadingTask = pdfjsLib.getDocument({
+      data: uint8Array,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+
+    const pdfDocument = await loadingTask.promise;
+    const numPages = pdfDocument.numPages;
+    const textParts: string[] = [];
+
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdfDocument.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item: any) => ('str' in item ? item.str : ''))
+        .join(' ');
+      textParts.push(pageText);
     }
 
-    const arrayBuffer = await blob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const pdfParse = (await import('pdf-parse')).default;
-    const parsed = await pdfParse(buffer, { normalizeWhitespace: false });
-    const text = (parsed.text ?? '')
+    const text = textParts
+      .join('\n\n')
       .replace(/\n{3,}/g, '\n\n')
       .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
       .trim();
@@ -53,7 +70,7 @@ async function extractPdfText(filePath: string): Promise<{ text: string; error?:
     }
     return { text };
   } catch (err) {
-    return { text: '', error: err instanceof Error ? err.message : 'pdf-parse failed.' };
+    return { text: '', error: err instanceof Error ? err.message : 'PDF extraction failed.' };
   }
 }
 
