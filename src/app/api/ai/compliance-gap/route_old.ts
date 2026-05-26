@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { extractTextFromPdf } from '@/lib/ai/pdfExtractor';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey =
@@ -20,63 +21,23 @@ async function setStatus(
     .eq('id', analysisId);
 }
 
-async function extractPdfText(filePath: string): Promise<{ text: string; error?: string }> {
-  const supabase = adminClient();
-
-  const { data: blob, error } = await supabase.storage
-    .from('documents')
-    .download(filePath);
-
-  if (error || !blob) {
-    return { text: '', error: error?.message ?? 'Failed to download file from storage.' };
-  }
-
-  try {
-    // Polyfill DOMMatrix for pdf-parse in Next.js serverless environment
-    if (typeof globalThis.DOMMatrix === 'undefined') {
-      (globalThis as any).DOMMatrix = class DOMMatrix {
-        constructor() {}
-      };
-    }
-
-    const arrayBuffer = await blob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const pdfParse = (await import('pdf-parse')).default;
-    const parsed = await pdfParse(buffer, { normalizeWhitespace: false });
-    const text = (parsed.text ?? '')
-      .replace(/\n{3,}/g, '\n\n')
-      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
-      .trim();
-
-    if (text.length < 50) {
-      return { text: '', error: 'Extracted text too short — PDF may be image-only or scanned.' };
-    }
-    return { text };
-  } catch (err) {
-    return { text: '', error: err instanceof Error ? err.message : 'pdf-parse failed.' };
-  }
-}
-
+// ── POST /api/ai/compliance-gap ───────────────────────────────────────────────
+// Body: { analysisId: number }
+// Runs the full gap analysis for an already-created compliance_analysis row.
 export async function POST(req: NextRequest) {
   const openAiApiKey = process.env.OPENAI_API_KEY;
   if (!openAiApiKey) {
     return NextResponse.json({ error: 'OPENAI_API_KEY is not configured.' }, { status: 500 });
   }
 
-  let body: { analysisId?: number };
-  try {
-    body = await req.json();
-  } catch {
-    return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
-  }
-
-  const { analysisId } = body;
+  const { analysisId } = await req.json();
   if (!analysisId) {
     return NextResponse.json({ error: 'analysisId is required.' }, { status: 400 });
   }
 
   const supabase = adminClient();
 
+  // ── 1. Fetch the analysis row ────────────────────────────────────────────
   const { data: analysis, error: fetchErr } = await supabase
     .from('compliance_analysis')
     .select('*')
@@ -87,39 +48,53 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Analysis not found.' }, { status: 404 });
   }
 
+  // ── 2. Extract text from uploaded PDF ───────────────────────────────────
   await setStatus(analysisId, 'extracting');
 
-  if (!analysis.file_path) {
-    await setStatus(analysisId, 'failed', { processing_error: 'No file path on this analysis record.' });
-    return NextResponse.json({ error: 'No file attached.' }, { status: 400 });
+  let procedureText = '';
+
+  if (analysis.file_path) {
+    const pdfResult = await extractTextFromPdf(analysis.file_path);
+    if (pdfResult.extraction_success && pdfResult.text.length > 50) {
+      procedureText = pdfResult.text;
+    } else {
+      await setStatus(analysisId, 'failed', {
+        processing_error: pdfResult.extraction_error ?? 'Could not extract text from PDF.',
+      });
+      return NextResponse.json({ error: 'PDF extraction failed.' }, { status: 400 });
+    }
+  } else {
+    await setStatus(analysisId, 'failed', {
+      processing_error: 'No file path stored on this analysis.',
+    });
+    return NextResponse.json({ error: 'No file attached to this analysis.' }, { status: 400 });
   }
 
-  const { text: procedureText, error: pdfError } = await extractPdfText(analysis.file_path);
-
-  if (!procedureText) {
-    await setStatus(analysisId, 'failed', { processing_error: pdfError ?? 'PDF extraction failed.' });
-    return NextResponse.json({ error: pdfError ?? 'PDF extraction failed.' }, { status: 400 });
-  }
-
+  // ── 3. Fetch stored regulations to check against ─────────────────────────
   await setStatus(analysisId, 'analysing');
 
   const { data: regulations } = await supabase
     .from('regulation')
     .select('id, regulation_number, title, authority, regulation_type')
     .order('regulation_number', { ascending: true })
-    .limit(80);
+    .limit(80); // stay within token limits
 
   if (!regulations || regulations.length === 0) {
     await setStatus(analysisId, 'failed', {
-      processing_error: 'No regulations in database. Upload and process regulatory documents first.',
+      processing_error:
+        'No regulations found in the database. Upload and process regulatory documents first.',
     });
     return NextResponse.json({ error: 'No regulations in database.' }, { status: 400 });
   }
 
   const regulationList = regulations
-    .map((r) => `- ${r.regulation_number}: ${r.title} (${r.authority ?? 'Unknown authority'})`)
+    .map(
+      (r) =>
+        `- ${r.regulation_number}: ${r.title} (${r.authority ?? 'Unknown authority'})`
+    )
     .join('\n');
 
+  // ── 4. Call GPT-4o for gap analysis ──────────────────────────────────────
   const systemPrompt = `You are a senior aviation compliance auditor specialising in EASA and ICAO regulations.
 You analyse aviation operators' procedures documents and identify compliance gaps against known regulatory requirements.
 Always respond with valid JSON only — no markdown, no code fences, no extra text.`;
@@ -138,21 +113,34 @@ For each regulation listed above, assess whether the operator's procedures docum
 
 Return a JSON object with exactly this structure:
 {
-  "overall_score": <integer 0-100>,
-  "ai_summary": "<2-4 sentence executive summary>",
+  "overall_score": <integer 0-100, overall compliance percentage>,
+  "ai_summary": "<2-4 sentence executive summary of the compliance status, key risks, and top recommendation>",
   "gaps": [
     {
-      "regulation_number": "<exact number from the list above>",
+      "regulation_number": "<exact regulation number from the list>",
       "regulation_title": "<title>",
       "authority": "<authority>",
       "status": "compliant" | "gap" | "partial",
       "severity": "low" | "medium" | "high" | "critical",
-      "gap_description": "<specific gap — empty string if compliant>",
-      "recommendation": "<action to take — empty string if compliant>",
+      "gap_description": "<what is missing or insufficient — be specific, max 2 sentences. Empty string if compliant.>",
+      "recommendation": "<what the operator should do to become compliant — max 2 sentences. Empty string if compliant.>",
       "affected_annexes": ["Annex I", "Part-CAT"]
     }
   ]
-}`;
+}
+
+Status guidance:
+- "compliant": The procedures document clearly addresses this regulation's requirements.
+- "partial": Some requirements are addressed but gaps remain.
+- "gap": The regulation is not addressed or is clearly insufficient.
+
+Severity guidance (for gap/partial only):
+- "critical": Safety-critical requirement, immediate action needed.
+- "high": Significant compliance risk, action needed before next audit.
+- "medium": Notable gap, should be addressed in near term.
+- "low": Minor or administrative gap.
+
+Be specific and practical. An auditor should be able to hand this report to a client.`;
 
   let parsed: {
     overall_score: number;
@@ -190,16 +178,17 @@ Return a JSON object with exactly this structure:
     const data = await response.json();
     const raw: string = data?.choices?.[0]?.message?.content ?? '';
 
-    if (!raw) throw new Error('Empty AI response — check OPENAI_API_KEY and quota.');
+    if (!raw) throw new Error('Empty AI response');
 
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     parsed = JSON.parse(cleaned);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'AI analysis failed.';
+    const msg = err instanceof Error ? err.message : 'AI analysis failed';
     await setStatus(analysisId, 'failed', { processing_error: msg });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
+  // ── 5. Store gap rows ─────────────────────────────────────────────────────
   const regulationMap = new Map(regulations.map((r) => [r.regulation_number, r.id]));
 
   const gapRows = parsed.gaps.map((g) => ({
@@ -223,6 +212,7 @@ Return a JSON object with exactly this structure:
   const gapCount = parsed.gaps.filter((g) => g.status === 'gap').length;
   const partialCount = parsed.gaps.filter((g) => g.status === 'partial').length;
 
+  // ── 6. Mark complete ──────────────────────────────────────────────────────
   await setStatus(analysisId, 'complete', {
     overall_score: parsed.overall_score ?? 0,
     ai_summary: parsed.ai_summary ?? '',
