@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutDashboard, FileText, GitCompare, ChevronLeft, ChevronRight, Plane, Users, Database, ScrollText, BookOpen } from 'lucide-react';
 import { useRole } from '@/contexts/RoleContext';
+import { LayoutDashboard, FileText, GitCompare, ChevronLeft, ChevronRight, Plane, Users, Database, ScrollText, BookOpen, ShieldCheck } from 'lucide-react';
 
 type NavItem = {
   label: string;
@@ -43,6 +44,11 @@ const baseNavItems: NavItem[] = [
     href: '/sources-page',
     icon: <Database size={20} />,
   },
+  {
+  label: 'Compliance Gaps',
+  href: '/compliance-gap-page',
+  icon: <ShieldCheck size={20} />,
+},
 ];
 
 const adminNavItem: NavItem = {
