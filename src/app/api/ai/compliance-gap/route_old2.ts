@@ -1,0 +1,261 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceKey =
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+function adminClient() {
+  return createClient(supabaseUrl, supabaseServiceKey);
+}
+
+async function setStatus(
+  analysisId: number,
+  status: string,
+  extra: Record<string, unknown> = {}
+) {
+  await adminClient()
+    .from('compliance_analysis')
+    .update({ status, updated_at: new Date().toISOString(), ...extra })
+    .eq('id', analysisId);
+}
+
+async function extractPdfText(filePath: string): Promise<{ text: string; error?: string }> {
+  const supabase = adminClient();
+
+  const { data: blob, error } = await supabase.storage
+    .from('documents')
+    .download(filePath);
+
+  if (error || !blob) {
+    return { text: '', error: error?.message ?? 'Failed to download file from storage.' };
+  }
+
+  try {
+    const arrayBuffer = await blob.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    // Use pdfjs-dist which works reliably in Next.js serverless
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+
+    const loadingTask = pdfjsLib.getDocument({
+      data: uint8Array,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+
+    const pdfDocument = await loadingTask.promise;
+    const numPages = pdfDocument.numPages;
+    const textParts: string[] = [];
+
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdfDocument.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item: any) => ('str' in item ? item.str : ''))
+        .join(' ');
+      textParts.push(pageText);
+    }
+
+    const text = textParts
+      .join('\n\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+      .trim();
+
+    if (text.length < 50) {
+      return { text: '', error: 'Extracted text too short — PDF may be image-only or scanned.' };
+    }
+    return { text };
+  } catch (err) {
+    return { text: '', error: err instanceof Error ? err.message : 'PDF extraction failed.' };
+  }
+}
+
+export async function POST(req: NextRequest) {
+  const openAiApiKey = process.env.OPENAI_API_KEY;
+  if (!openAiApiKey) {
+    return NextResponse.json({ error: 'OPENAI_API_KEY is not configured.' }, { status: 500 });
+  }
+
+  let body: { analysisId?: number };
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
+  }
+
+  const { analysisId } = body;
+  if (!analysisId) {
+    return NextResponse.json({ error: 'analysisId is required.' }, { status: 400 });
+  }
+
+  const supabase = adminClient();
+
+  const { data: analysis, error: fetchErr } = await supabase
+    .from('compliance_analysis')
+    .select('*')
+    .eq('id', analysisId)
+    .single();
+
+  if (fetchErr || !analysis) {
+    return NextResponse.json({ error: 'Analysis not found.' }, { status: 404 });
+  }
+
+  await setStatus(analysisId, 'extracting');
+
+  if (!analysis.file_path) {
+    await setStatus(analysisId, 'failed', { processing_error: 'No file path on this analysis record.' });
+    return NextResponse.json({ error: 'No file attached.' }, { status: 400 });
+  }
+
+  const { text: procedureText, error: pdfError } = await extractPdfText(analysis.file_path);
+
+  if (!procedureText) {
+    await setStatus(analysisId, 'failed', { processing_error: pdfError ?? 'PDF extraction failed.' });
+    return NextResponse.json({ error: pdfError ?? 'PDF extraction failed.' }, { status: 400 });
+  }
+
+  await setStatus(analysisId, 'analysing');
+
+  const { data: regulations } = await supabase
+    .from('regulation')
+    .select('id, regulation_number, title, authority, regulation_type')
+    .order('regulation_number', { ascending: true })
+    .limit(80);
+
+  if (!regulations || regulations.length === 0) {
+    await setStatus(analysisId, 'failed', {
+      processing_error: 'No regulations in database. Upload and process regulatory documents first.',
+    });
+    return NextResponse.json({ error: 'No regulations in database.' }, { status: 400 });
+  }
+
+  const regulationList = regulations
+    .map((r) => `- ${r.regulation_number}: ${r.title} (${r.authority ?? 'Unknown authority'})`)
+    .join('\n');
+
+  const systemPrompt = `You are a senior aviation compliance auditor specialising in EASA and ICAO regulations.
+You analyse aviation operators' procedures documents and identify compliance gaps against known regulatory requirements.
+Always respond with valid JSON only — no markdown, no code fences, no extra text.`;
+
+  const userPrompt = `You are auditing an aviation operator's procedures document against a set of known regulatory instruments.
+
+KNOWN REGULATIONS IN THE DATABASE:
+${regulationList}
+
+OPERATOR PROCEDURES DOCUMENT (extracted text):
+"""
+${procedureText.slice(0, 12000)}
+"""
+
+For each regulation listed above, assess whether the operator's procedures document addresses it.
+
+Return a JSON object with exactly this structure:
+{
+  "overall_score": <integer 0-100>,
+  "ai_summary": "<2-4 sentence executive summary>",
+  "gaps": [
+    {
+      "regulation_number": "<exact number from the list above>",
+      "regulation_title": "<title>",
+      "authority": "<authority>",
+      "status": "compliant" | "gap" | "partial",
+      "severity": "low" | "medium" | "high" | "critical",
+      "gap_description": "<specific gap — empty string if compliant>",
+      "recommendation": "<action to take — empty string if compliant>",
+      "affected_annexes": ["Annex I", "Part-CAT"]
+    }
+  ]
+}`;
+
+  let parsed: {
+    overall_score: number;
+    ai_summary: string;
+    gaps: Array<{
+      regulation_number: string;
+      regulation_title: string;
+      authority: string;
+      status: 'compliant' | 'gap' | 'partial';
+      severity: string;
+      gap_description: string;
+      recommendation: string;
+      affected_annexes: string[];
+    }>;
+  };
+
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${openAiApiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+        max_tokens: 4000,
+        temperature: 0.2,
+      }),
+    });
+
+    const data = await response.json();
+    const raw: string = data?.choices?.[0]?.message?.content ?? '';
+
+    if (!raw) throw new Error('Empty AI response — check OPENAI_API_KEY and quota.');
+
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'AI analysis failed.';
+    await setStatus(analysisId, 'failed', { processing_error: msg });
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  const regulationMap = new Map(regulations.map((r) => [r.regulation_number, r.id]));
+
+  const gapRows = parsed.gaps.map((g) => ({
+    analysis_id: analysisId,
+    regulation_id: regulationMap.get(g.regulation_number) ?? null,
+    regulation_number: g.regulation_number,
+    regulation_title: g.regulation_title,
+    authority: g.authority ?? null,
+    status: g.status,
+    severity: g.severity ?? 'medium',
+    gap_description: g.gap_description ?? '',
+    recommendation: g.recommendation ?? '',
+    affected_annexes: g.affected_annexes ?? [],
+  }));
+
+  if (gapRows.length > 0) {
+    await supabase.from('compliance_gap').insert(gapRows);
+  }
+
+  const compliantCount = parsed.gaps.filter((g) => g.status === 'compliant').length;
+  const gapCount = parsed.gaps.filter((g) => g.status === 'gap').length;
+  const partialCount = parsed.gaps.filter((g) => g.status === 'partial').length;
+
+  await setStatus(analysisId, 'complete', {
+    overall_score: parsed.overall_score ?? 0,
+    ai_summary: parsed.ai_summary ?? '',
+    total_regulations_checked: parsed.gaps.length,
+    compliant_count: compliantCount,
+    gap_count: gapCount,
+    partial_count: partialCount,
+  });
+
+  return NextResponse.json({
+    success: true,
+    analysisId,
+    overall_score: parsed.overall_score,
+    total: parsed.gaps.length,
+    compliant: compliantCount,
+    gaps: gapCount,
+    partial: partialCount,
+  });
+}
