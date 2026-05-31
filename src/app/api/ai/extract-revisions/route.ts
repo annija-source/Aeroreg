@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
     // ── PDF Extraction ────────────────────────────────────────────────────────
     let resolvedText: string = documentText ?? '';
     let extracted_text_length = resolvedText.length;
-    let extraction_method: 'pdf-parse' | 'fallback-provided-text' | 'none' = 'none';
+    let extraction_method: 'openai-pdf' | 'fallback-provided-text' | 'none' = 'none';
     let extraction_success = false;
     let extraction_error: string | undefined;
     let page_count: number | undefined;
