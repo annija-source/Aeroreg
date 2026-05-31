@@ -20,58 +20,6 @@ async function setStatus(
     .eq('id', analysisId);
 }
 
-// Pure Node.js PDF text extractor — no browser APIs needed
-// Parses raw PDF binary and extracts text from stream objects
-function extractTextFromPdfBuffer(buffer: Buffer): string {
-  const content = buffer.toString('binary');
-  const textParts: string[] = [];
-
-  // Extract text from BT...ET blocks (PDF text objects)
-  const btEtRegex = /BT([\s\S]*?)ET/g;
-  let match;
-  while ((match = btEtRegex.exec(content)) !== null) {
-    const block = match[1];
-    // Extract strings from Tj, TJ, ' and " operators
-    const strRegex = /\(([^)]*)\)\s*(?:Tj|'|")|(\[([^\]]*)\])\s*TJ/g;
-    let strMatch;
-    while ((strMatch = strRegex.exec(block)) !== null) {
-      if (strMatch[1] !== undefined) {
-        // Simple string from Tj
-        const decoded = strMatch[1]
-          .replace(/\\n/g, ' ')
-          .replace(/\\r/g, ' ')
-          .replace(/\\t/g, ' ')
-          .replace(/\\\(/g, '(')
-          .replace(/\\\)/g, ')')
-          .replace(/\\\\/g, '\\')
-          .replace(/[^\x20-\x7E]/g, ' ');
-        if (decoded.trim().length > 0) textParts.push(decoded);
-      } else if (strMatch[3] !== undefined) {
-        // Array string from TJ
-        const arrayContent = strMatch[3];
-        const arrStrRegex = /\(([^)]*)\)/g;
-        let arrMatch;
-        while ((arrMatch = arrStrRegex.exec(arrayContent)) !== null) {
-          const decoded = arrMatch[1]
-            .replace(/\\n/g, ' ')
-            .replace(/\\r/g, ' ')
-            .replace(/\\\(/g, '(')
-            .replace(/\\\)/g, ')')
-            .replace(/[^\x20-\x7E]/g, ' ');
-          if (decoded.trim().length > 0) textParts.push(decoded);
-        }
-      }
-    }
-    textParts.push('\n');
-  }
-
-  return textParts
-    .join(' ')
-    .replace(/ {3,}/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
 async function extractPdfText(filePath: string): Promise<{ text: string; error?: string }> {
   const supabase = adminClient();
 
@@ -85,11 +33,40 @@ async function extractPdfText(filePath: string): Promise<{ text: string; error?:
 
   try {
     const arrayBuffer = await blob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const text = extractTextFromPdfBuffer(buffer);
+    const uint8Array = new Uint8Array(arrayBuffer);
+
+    // Use pdfjs-dist which works reliably in Next.js serverless
+    const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+    pdfjsLib.GlobalWorkerOptions.workerSrc = '';
+
+    const loadingTask = pdfjsLib.getDocument({
+      data: uint8Array,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      useSystemFonts: true,
+    });
+
+    const pdfDocument = await loadingTask.promise;
+    const numPages = pdfDocument.numPages;
+    const textParts: string[] = [];
+
+    for (let i = 1; i <= numPages; i++) {
+      const page = await pdfDocument.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items
+        .map((item: any) => ('str' in item ? item.str : ''))
+        .join(' ');
+      textParts.push(pageText);
+    }
+
+    const text = textParts
+      .join('\n\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+      .trim();
 
     if (text.length < 50) {
-      return { text: '', error: 'Could not extract enough text from PDF. The file may be scanned/image-based.' };
+      return { text: '', error: 'Extracted text too short — PDF may be image-only or scanned.' };
     }
     return { text };
   } catch (err) {
