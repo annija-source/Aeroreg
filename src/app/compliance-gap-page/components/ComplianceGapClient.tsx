@@ -1,25 +1,11 @@
 'use client';
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import {
-  ShieldCheck,
-  ShieldAlert,
-  ShieldX,
-  Upload,
-  Plus,
-  Trash2,
-  RefreshCw,
-  ChevronDown,
-  ChevronUp,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  FileText,
-  BarChart3,
-  Sparkles,
-  X,
+  ShieldCheck, ShieldAlert, ShieldX, Upload, Plus, Trash2,
+  RefreshCw, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
+  FileText, BarChart3, Sparkles, X, ArrowLeft,
 } from 'lucide-react';
 
 const supabase = createClient();
@@ -87,21 +73,15 @@ function ScoreRing({ score }: { score: number }) {
   return (
     <svg width="100" height="100" viewBox="0 0 100 100">
       <circle cx="50" cy="50" r={r} fill="none" stroke="#e2e8f0" strokeWidth="8" />
-      <circle
-        cx="50" cy="50" r={r} fill="none"
-        stroke={color} strokeWidth="8"
-        strokeDasharray={circ} strokeDashoffset={offset}
-        strokeLinecap="round"
-        transform="rotate(-90 50 50)"
-        style={{ transition: 'stroke-dashoffset 1s ease' }}
-      />
+      <circle cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="8"
+        strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round"
+        transform="rotate(-90 50 50)" style={{ transition: 'stroke-dashoffset 1s ease' }} />
       <text x="50" y="46" textAnchor="middle" fontSize="20" fontWeight="600" fill={color}>{score}</text>
       <text x="50" y="60" textAnchor="middle" fontSize="10" fill="#94a3b8">/ 100</text>
     </svg>
   );
 }
 
-// ── New Analysis Modal ────────────────────────────────────────────────────────
 function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreated: () => void }) {
   const [title, setTitle] = useState('');
   const [clientName, setClientName] = useState('');
@@ -110,46 +90,20 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function handleSubmit() {
-    if (!title.trim() || !file) {
-      toast.error('Please enter a title and upload a PDF.');
-      return;
-    }
+    if (!title.trim() || !file) { toast.error('Please enter a title and upload a PDF.'); return; }
     setUploading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
-
-      // Upload PDF to Supabase Storage (reuse the documents bucket)
       const ext = file.name.split('.').pop();
       const filePath = `compliance/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-      const { error: uploadErr } = await supabase.storage
-        .from('documents')
-        .upload(filePath, file, { contentType: file.type });
-
+      const { error: uploadErr } = await supabase.storage.from('documents').upload(filePath, file, { contentType: file.type });
       if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
-
-      // Create compliance_analysis row
       const { data: row, error: insertErr } = await supabase
         .from('compliance_analysis')
-        .insert({
-          title: title.trim(),
-          client_name: clientName.trim() || null,
-          file_name: file.name,
-          file_path: filePath,
-          status: 'pending',
-          created_by: user?.id ?? null,
-        })
-        .select('id')
-        .single();
-
+        .insert({ title: title.trim(), client_name: clientName.trim() || null, file_name: file.name, file_path: filePath, status: 'pending', created_by: user?.id ?? null })
+        .select('id').single();
       if (insertErr || !row) throw new Error('Failed to create analysis record.');
-
-      // Trigger the AI analysis (fire and forget — UI polls status)
-      fetch('/api/ai/compliance-gap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ analysisId: row.id }),
-      });
-
+      fetch('/api/ai/compliance-gap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysisId: row.id }) });
       toast.success('Analysis started! This may take a minute.');
       onCreated();
       onClose();
@@ -165,71 +119,36 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h2 className="text-base font-semibold text-slate-900">New Compliance Analysis</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors">
-            <X size={18} />
-          </button>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 transition-colors"><X size={18} /></button>
         </div>
         <div className="px-6 py-5 space-y-4">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Analysis title *</label>
-            <input
-              type="text"
-              value={title}
-              onChange={e => setTitle(e.target.value)}
-              placeholder="e.g. AirlineX Ops Manual Review Q2 2026"
-              className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. AirlineX Ops Manual Review Q2 2026"
+              className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Client name</label>
-            <input
-              type="text"
-              value={clientName}
-              onChange={e => setClientName(e.target.value)}
-              placeholder="e.g. AirlineX Ltd"
-              className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <input type="text" value={clientName} onChange={e => setClientName(e.target.value)} placeholder="e.g. AirlineX Ltd"
+              className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Operator procedures PDF *</label>
-            <div
-              onClick={() => fileRef.current?.click()}
-              className="flex flex-col items-center justify-center gap-2 px-4 py-6 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-all"
-            >
+            <div onClick={() => fileRef.current?.click()}
+              className="flex flex-col items-center justify-center gap-2 px-4 py-6 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-all">
               {file ? (
-                <>
-                  <FileText size={22} className="text-blue-500" />
-                  <span className="text-sm font-medium text-slate-700">{file.name}</span>
-                  <span className="text-xs text-slate-400">{(file.size / 1024).toFixed(0)} KB</span>
-                </>
+                <><FileText size={22} className="text-blue-500" /><span className="text-sm font-medium text-slate-700">{file.name}</span><span className="text-xs text-slate-400">{(file.size / 1024).toFixed(0)} KB</span></>
               ) : (
-                <>
-                  <Upload size={22} className="text-slate-300" />
-                  <span className="text-sm text-slate-400">Click to upload PDF</span>
-                </>
+                <><Upload size={22} className="text-slate-300" /><span className="text-sm text-slate-400">Click to upload PDF</span></>
               )}
             </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".pdf"
-              className="hidden"
-              onChange={e => setFile(e.target.files?.[0] ?? null)}
-            />
+            <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
           </div>
         </div>
         <div className="flex gap-3 px-6 py-4 border-t border-slate-100">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={uploading}
-            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-60"
-          >
+          <button onClick={onClose} className="flex-1 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors">Cancel</button>
+          <button onClick={handleSubmit} disabled={uploading}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-60">
             {uploading ? <RefreshCw size={15} className="animate-spin" /> : <Sparkles size={15} />}
             {uploading ? 'Starting...' : 'Run Analysis'}
           </button>
@@ -239,24 +158,19 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
   );
 }
 
-// ── Gap Row ───────────────────────────────────────────────────────────────────
 function GapRow({ gap }: { gap: ComplianceGap }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="border border-slate-100 rounded-xl overflow-hidden">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left"
-      >
+      <button onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition-colors text-left">
         {gapStatusIcon[gap.status]}
         <div className="flex-1 min-w-0">
           <span className="text-sm font-medium text-slate-800 truncate block">{gap.regulation_number}</span>
           <span className="text-xs text-slate-400 truncate block">{gap.regulation_title}</span>
         </div>
         {gap.status !== 'compliant' && (
-          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${severityStyle[gap.severity]}`}>
-            {gap.severity}
-          </span>
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${severityStyle[gap.severity]}`}>{gap.severity}</span>
         )}
         {open ? <ChevronUp size={14} className="text-slate-400 shrink-0" /> : <ChevronDown size={14} className="text-slate-400 shrink-0" />}
       </button>
@@ -287,8 +201,7 @@ function GapRow({ gap }: { gap: ComplianceGap }) {
   );
 }
 
-// ── Analysis Detail Panel ─────────────────────────────────────────────────────
-function AnalysisDetail({ analysis, onDelete }: { analysis: ComplianceAnalysis; onDelete: () => void }) {
+function AnalysisDetail({ analysis, onBack, onDelete }: { analysis: ComplianceAnalysis; onBack: () => void; onDelete: () => void }) {
   const [gaps, setGaps] = useState<ComplianceGap[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<GapStatus | 'all'>('all');
@@ -296,14 +209,8 @@ function AnalysisDetail({ analysis, onDelete }: { analysis: ComplianceAnalysis; 
   useEffect(() => {
     (async () => {
       setLoading(true);
-      const { data } = await supabase
-        .from('compliance_gap')
-        .select('*')
-        .eq('analysis_id', analysis.id)
-        .order('status', { ascending: false });
-      const sorted = (data ?? []).sort((a, b) =>
-        (SEVERITY_ORDER[a.severity as Severity] ?? 9) - (SEVERITY_ORDER[b.severity as Severity] ?? 9)
-      );
+      const { data } = await supabase.from('compliance_gap').select('*').eq('analysis_id', analysis.id);
+      const sorted = (data ?? []).sort((a, b) => (SEVERITY_ORDER[a.severity as Severity] ?? 9) - (SEVERITY_ORDER[b.severity as Severity] ?? 9));
       setGaps(sorted);
       setLoading(false);
     })();
@@ -312,85 +219,73 @@ function AnalysisDetail({ analysis, onDelete }: { analysis: ComplianceAnalysis; 
   const filtered = filter === 'all' ? gaps : gaps.filter(g => g.status === filter);
 
   async function handleDelete() {
-    if (!confirm('Delete this analysis? This cannot be undone.')) return;
+    if (!confirm('Delete this analysis?')) return;
     await supabase.from('compliance_analysis').delete().eq('id', analysis.id);
     onDelete();
     toast.success('Analysis deleted.');
   }
 
-  if (analysis.status !== 'complete') {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 text-center p-8">
-        {analysis.status === 'failed' ? (
-          <>
-            <ShieldAlert size={36} className="text-red-400" />
-            <p className="text-sm font-medium text-red-600">Analysis failed</p>
-            <p className="text-xs text-slate-400 max-w-xs">{analysis.processing_error}</p>
-            <button onClick={handleDelete} className="mt-2 text-xs text-red-500 hover:underline">Delete this run</button>
-          </>
-        ) : (
-          <>
-            <RefreshCw size={32} className="text-blue-400 animate-spin" />
-            <p className="text-sm font-medium text-slate-700">{STATUS_LABELS[analysis.status]}</p>
-            <p className="text-xs text-slate-400">This usually takes 30–60 seconds</p>
-          </>
-        )}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex-1 overflow-y-auto p-5 space-y-5">
-      {/* Score + summary */}
-      <div className="flex gap-5 items-center bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
-        {analysis.overall_score != null && <ScoreRing score={analysis.overall_score} />}
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">AI Summary</p>
-          <p className="text-sm text-slate-700 leading-relaxed">{analysis.ai_summary}</p>
-          <div className="flex gap-4 mt-3 text-xs">
-            <span className="flex items-center gap-1 text-emerald-600 font-semibold">
-              <CheckCircle2 size={12} /> {analysis.compliant_count ?? 0} compliant
-            </span>
-            <span className="flex items-center gap-1 text-amber-600 font-semibold">
-              <AlertTriangle size={12} /> {analysis.partial_count ?? 0} partial
-            </span>
-            <span className="flex items-center gap-1 text-red-600 font-semibold">
-              <ShieldX size={12} /> {analysis.gap_count ?? 0} gaps
-            </span>
+    <div>
+      {/* Detail header */}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors">
+            <ArrowLeft size={16} /> Back
+          </button>
+          <div className="w-px h-4 bg-slate-200" />
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">{analysis.title}</h2>
+            {analysis.client_name && <p className="text-xs text-slate-400">{analysis.client_name} · {analysis.file_name}</p>}
           </div>
         </div>
-        <button
-          onClick={handleDelete}
-          className="self-start p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-          title="Delete analysis"
-        >
+        <button onClick={handleDelete} className="p-2 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Delete analysis">
           <Trash2 size={15} />
         </button>
       </div>
 
-      {/* Filter tabs */}
-      <div className="flex gap-2">
-        {(['all', 'gap', 'partial', 'compliant'] as const).map(f => (
-          <button
-            key={f}
-            onClick={() => setFilter(f)}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-lg capitalize transition-colors ${filter === f ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
-          >
-            {f === 'all' ? `All (${gaps.length})` : f === 'gap' ? `Gaps (${gaps.filter(g => g.status === 'gap').length})` : f === 'partial' ? `Partial (${gaps.filter(g => g.status === 'partial').length})` : `Compliant (${gaps.filter(g => g.status === 'compliant').length})`}
-          </button>
-        ))}
-      </div>
-
-      {/* Gap list */}
-      {loading ? (
-        <div className="flex items-center gap-2 text-sm text-slate-400">
-          <RefreshCw size={14} className="animate-spin" /> Loading results...
+      {analysis.status !== 'complete' ? (
+        <div className="flex flex-col items-center justify-center gap-3 text-center py-20">
+          {analysis.status === 'failed' ? (
+            <><ShieldAlert size={36} className="text-red-400" /><p className="text-sm font-medium text-red-600">Analysis failed</p><p className="text-xs text-slate-400 max-w-xs">{analysis.processing_error}</p></>
+          ) : (
+            <><RefreshCw size={32} className="text-blue-400 animate-spin" /><p className="text-sm font-medium text-slate-700">{STATUS_LABELS[analysis.status]}</p><p className="text-xs text-slate-400">This usually takes 30–60 seconds</p></>
+          )}
         </div>
       ) : (
-        <div className="space-y-2">
-          {filtered.map(gap => <GapRow key={gap.id} gap={gap} />)}
-          {filtered.length === 0 && (
-            <p className="text-sm text-slate-400 text-center py-6">No items in this category.</p>
+        <div className="space-y-6">
+          {/* Score + summary card */}
+          <div className="flex gap-5 items-center bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
+            {analysis.overall_score != null && <ScoreRing score={analysis.overall_score} />}
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">AI Summary</p>
+              <p className="text-sm text-slate-700 leading-relaxed">{analysis.ai_summary}</p>
+              <div className="flex gap-4 mt-3 text-xs">
+                <span className="flex items-center gap-1 text-emerald-600 font-semibold"><CheckCircle2 size={12} /> {analysis.compliant_count ?? 0} compliant</span>
+                <span className="flex items-center gap-1 text-amber-600 font-semibold"><AlertTriangle size={12} /> {analysis.partial_count ?? 0} partial</span>
+                <span className="flex items-center gap-1 text-red-600 font-semibold"><ShieldX size={12} /> {analysis.gap_count ?? 0} gaps</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Filter tabs */}
+          <div className="flex gap-2">
+            {(['all', 'gap', 'partial', 'compliant'] as const).map(f => (
+              <button key={f} onClick={() => setFilter(f)}
+                className={`px-3 py-1.5 text-xs font-semibold rounded-lg capitalize transition-colors ${filter === f ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                {f === 'all' ? `All (${gaps.length})` : f === 'gap' ? `Gaps (${gaps.filter(g => g.status === 'gap').length})` : f === 'partial' ? `Partial (${gaps.filter(g => g.status === 'partial').length})` : `Compliant (${gaps.filter(g => g.status === 'compliant').length})`}
+              </button>
+            ))}
+          </div>
+
+          {/* Gap list */}
+          {loading ? (
+            <div className="flex items-center gap-2 text-sm text-slate-400"><RefreshCw size={14} className="animate-spin" /> Loading results...</div>
+          ) : (
+            <div className="space-y-2">
+              {filtered.map(gap => <GapRow key={gap.id} gap={gap} />)}
+              {filtered.length === 0 && <p className="text-sm text-slate-400 text-center py-6">No items in this category.</p>}
+            </div>
           )}
         </div>
       )}
@@ -398,170 +293,116 @@ function AnalysisDetail({ analysis, onDelete }: { analysis: ComplianceAnalysis; 
   );
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
 export default function ComplianceGapClient() {
-  const router = useRouter();
   const [analyses, setAnalyses] = useState<ComplianceAnalysis[]>([]);
   const [selected, setSelected] = useState<ComplianceAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
 
   const fetchAnalyses = useCallback(async () => {
-    const { data } = await supabase
-      .from('compliance_analysis')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const { data } = await supabase.from('compliance_analysis').select('*').order('created_at', { ascending: false });
     setAnalyses(data ?? []);
     setLoading(false);
-    // Refresh selected if it was updated
     if (selected) {
       const updated = (data ?? []).find(a => a.id === selected.id);
       if (updated) setSelected(updated);
     }
   }, [selected]);
 
-  useEffect(() => {
-    fetchAnalyses();
-  }, []);
+  useEffect(() => { fetchAnalyses(); }, []);
 
-  // Poll every 5s if any analysis is running
   useEffect(() => {
-    const running = analyses.some(a =>
-      ['pending', 'extracting', 'analysing'].includes(a.status)
-    );
+    const running = analyses.some(a => ['pending', 'extracting', 'analysing'].includes(a.status));
     if (!running) return;
     const t = setInterval(fetchAnalyses, 5000);
     return () => clearInterval(t);
   }, [analyses, fetchAnalyses]);
 
+  // ── Detail view ────────────────────────────────────────────────────────────
+  if (selected) {
+    return (
+      <AnalysisDetail
+        analysis={selected}
+        onBack={() => setSelected(null)}
+        onDelete={() => { setSelected(null); fetchAnalyses(); }}
+      />
+    );
+  }
+
+  // ── List view ──────────────────────────────────────────────────────────────
   return (
-    <div className="flex h-full min-h-screen bg-slate-50">
-      {/* Left panel — list */}
-      <div className="w-80 shrink-0 flex flex-col border-r border-slate-200 bg-white">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
-          <div>
-            <h1 className="text-base font-bold text-slate-900">Compliance Gaps</h1>
-            <p className="text-xs text-slate-400 mt-0.5">Audit analyses</p>
+    <div>
+      {/* Page header */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Compliance Gap Analysis</h1>
+          <p className="text-sm text-slate-400 mt-1">Upload a client procedures document and AI will check it against all stored regulations</p>
+        </div>
+        <button onClick={() => setShowModal(true)}
+          className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm">
+          <Plus size={16} /> New Analysis
+        </button>
+      </div>
+
+      {/* List */}
+      {loading ? (
+        <div className="flex items-center gap-2 text-sm text-slate-400"><RefreshCw size={14} className="animate-spin" /> Loading...</div>
+      ) : analyses.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-4 text-center py-24">
+          <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center">
+            <BarChart3 size={28} className="text-blue-400" />
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-xs font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
-          >
-            <Plus size={14} /> New
+          <div>
+            <p className="text-base font-semibold text-slate-700">No analyses yet</p>
+            <p className="text-sm text-slate-400 max-w-sm mt-1">Upload a client's operations manual or procedures document to get started.</p>
+          </div>
+          <button onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm">
+            <Plus size={16} /> Start first analysis
           </button>
         </div>
-
-        <div className="flex-1 overflow-y-auto divide-y divide-slate-50">
-          {loading ? (
-            <div className="flex items-center gap-2 p-5 text-sm text-slate-400">
-              <RefreshCw size={14} className="animate-spin" /> Loading...
-            </div>
-          ) : analyses.length === 0 ? (
-            <div className="flex flex-col items-center gap-3 p-8 text-center">
-              <ShieldCheck size={32} className="text-slate-200" />
-              <p className="text-sm text-slate-400">No analyses yet. Upload a procedures document to get started.</p>
-            </div>
-          ) : (
-            analyses.map(a => {
-              const isSelected = selected?.id === a.id;
-              const isRunning = ['pending', 'extracting', 'analysing'].includes(a.status);
-              return (
-                <button
-                  key={a.id}
-                  onClick={() => setSelected(a)}
-                  className={`w-full text-left px-5 py-3.5 hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50 border-l-2 border-blue-500' : ''}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-slate-800 truncate">{a.title}</p>
-                      {a.client_name && (
-                        <p className="text-xs text-slate-400 truncate">{a.client_name}</p>
-                      )}
-                    </div>
-                    {a.status === 'complete' && a.overall_score != null && (
-                      <span className={`shrink-0 text-xs font-bold px-2 py-0.5 rounded-full ${a.overall_score >= 80 ? 'bg-emerald-50 text-emerald-600' : a.overall_score >= 50 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
-                        {a.overall_score}%
-                      </span>
-                    )}
-                    {isRunning && (
-                      <RefreshCw size={12} className="text-blue-400 animate-spin shrink-0 mt-0.5" />
-                    )}
-                    {a.status === 'failed' && (
-                      <AlertTriangle size={12} className="text-red-400 shrink-0 mt-0.5" />
-                    )}
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {analyses.map(a => {
+            const isRunning = ['pending', 'extracting', 'analysing'].includes(a.status);
+            return (
+              <button key={a.id} onClick={() => setSelected(a)}
+                className="text-left bg-white border border-slate-100 rounded-2xl p-5 hover:shadow-md hover:border-blue-200 transition-all shadow-sm">
+                <div className="flex items-start justify-between gap-2 mb-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-bold text-slate-800 truncate">{a.title}</p>
+                    {a.client_name && <p className="text-xs text-slate-400 truncate mt-0.5">{a.client_name}</p>}
                   </div>
-                  <div className="flex items-center gap-2 mt-1.5">
-                    <span className={`text-[10px] font-medium ${isRunning ? 'text-blue-500' : a.status === 'complete' ? 'text-emerald-500' : 'text-red-500'}`}>
-                      {STATUS_LABELS[a.status]}
+                  {a.status === 'complete' && a.overall_score != null && (
+                    <span className={`shrink-0 text-sm font-bold px-2.5 py-1 rounded-xl ${a.overall_score >= 80 ? 'bg-emerald-50 text-emerald-600' : a.overall_score >= 50 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
+                      {a.overall_score}%
                     </span>
-                    {a.status === 'complete' && (
-                      <>
-                        <span className="text-slate-200">·</span>
-                        <span className="text-[10px] text-slate-400">{a.gap_count} gap{a.gap_count !== 1 ? 's' : ''}</span>
-                      </>
-                    )}
+                  )}
+                  {isRunning && <RefreshCw size={14} className="text-blue-400 animate-spin shrink-0 mt-1" />}
+                  {a.status === 'failed' && <AlertTriangle size={14} className="text-red-400 shrink-0 mt-1" />}
+                </div>
+
+                {a.status === 'complete' && (
+                  <div className="flex gap-3 text-xs mb-3">
+                    <span className="flex items-center gap-1 text-emerald-600 font-medium"><CheckCircle2 size={11} /> {a.compliant_count ?? 0}</span>
+                    <span className="flex items-center gap-1 text-amber-600 font-medium"><AlertTriangle size={11} /> {a.partial_count ?? 0}</span>
+                    <span className="flex items-center gap-1 text-red-600 font-medium"><ShieldX size={11} /> {a.gap_count ?? 0} gaps</span>
                   </div>
-                </button>
-              );
-            })
-          )}
-        </div>
-      </div>
-
-      {/* Right panel — detail */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {selected ? (
-          <>
-            <div className="flex items-center justify-between px-6 py-4 bg-white border-b border-slate-100 shrink-0">
-              <div>
-                <h2 className="text-base font-bold text-slate-900">{selected.title}</h2>
-                {selected.client_name && (
-                  <p className="text-xs text-slate-400">{selected.client_name} · {selected.file_name}</p>
                 )}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={fetchAnalyses}
-                  className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
-                  title="Refresh"
-                >
-                  <RefreshCw size={15} />
-                </button>
-              </div>
-            </div>
-            <AnalysisDetail
-              key={selected.id}
-              analysis={selected}
-              onDelete={() => { setSelected(null); fetchAnalyses(); }}
-            />
-          </>
-        ) : (
-          <div className="flex-1 flex flex-col items-center justify-center gap-4 text-center p-8">
-            <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center">
-              <BarChart3 size={28} className="text-blue-400" />
-            </div>
-            <div>
-              <p className="text-base font-semibold text-slate-700">Compliance Gap Analysis</p>
-              <p className="text-sm text-slate-400 max-w-sm mt-1">
-                Upload a client's operations manual or procedures document. AI will check it against all stored regulations and flag every gap.
-              </p>
-            </div>
-            <button
-              onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white text-sm font-semibold rounded-xl hover:bg-blue-700 transition-colors shadow-sm"
-            >
-              <Plus size={16} /> Start first analysis
-            </button>
-          </div>
-        )}
-      </div>
 
-      {showModal && (
-        <NewAnalysisModal
-          onClose={() => setShowModal(false)}
-          onCreated={fetchAnalyses}
-        />
+                <div className="flex items-center justify-between">
+                  <span className={`text-[11px] font-medium ${isRunning ? 'text-blue-500' : a.status === 'complete' ? 'text-emerald-500' : a.status === 'failed' ? 'text-red-500' : 'text-slate-400'}`}>
+                    {STATUS_LABELS[a.status]}
+                  </span>
+                  <span className="text-[11px] text-slate-300">{new Date(a.created_at).toLocaleDateString()}</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       )}
+
+      {showModal && <NewAnalysisModal onClose={() => setShowModal(false)} onCreated={fetchAnalyses} />}
     </div>
   );
 }
