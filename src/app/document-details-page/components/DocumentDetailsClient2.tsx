@@ -311,15 +311,6 @@ export default function DocumentDetailsClient() {
     setLoadingComparisons(false);
   }, [docId]);
 
-  // ── Fetch all data on mount / when docId changes ──────────────────────────
-  useEffect(() => {
-    if (!docId) return;
-    fetchDocument();
-    fetchVersions();
-    fetchComparisons();
-    fetchDocumentRevisions();
-  }, [docId, fetchDocument, fetchVersions, fetchComparisons, fetchDocumentRevisions]);
-
   const handleDeleteVersion = async () => {
     if (!deleteVersion) return;
     setDeleteLoading(true);
