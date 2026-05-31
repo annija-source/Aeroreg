@@ -1,14 +1,13 @@
-import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+import React from 'react';
+import AppLayout from '@/components/AppLayout';
 import ComplianceGapClient from './components/ComplianceGapClient';
+import ToastProvider from '@/components/ui/Toast';
 
-export default async function ComplianceGapPage() {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) redirect('/login');
-
-  return <ComplianceGapClient />;
+export default function ComplianceGapPage() {
+  return (
+    <AppLayout>
+      <ToastProvider />
+      <ComplianceGapClient />
+    </AppLayout>
+  );
 }
