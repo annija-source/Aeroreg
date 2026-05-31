@@ -256,7 +256,7 @@ function AnalysisDetail({ analysis, onBack, onDelete }: { analysis: ComplianceAn
         <div className="space-y-6">
           {/* Score + summary card */}
           <div className="flex gap-5 items-center bg-white border border-slate-100 rounded-2xl p-5 shadow-sm">
-            {analysis.overall_score != null && analysis.overall_score > 0 && <ScoreRing score={analysis.overall_score} />}
+            {analysis.overall_score != null && <ScoreRing score={analysis.overall_score} />}
             <div className="flex-1 min-w-0">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-1">AI Summary</p>
               <p className="text-sm text-slate-700 leading-relaxed">{analysis.ai_summary}</p>
@@ -373,7 +373,7 @@ export default function ComplianceGapClient() {
                     <p className="text-sm font-bold text-slate-800 truncate">{a.title}</p>
                     {a.client_name && <p className="text-xs text-slate-400 truncate mt-0.5">{a.client_name}</p>}
                   </div>
-                  {a.status === 'complete' && a.overall_score != null && a.overall_score > 0 && (
+                  {a.status === 'complete' && a.overall_score != null && (
                     <span className={`shrink-0 text-sm font-bold px-2.5 py-1 rounded-xl ${a.overall_score >= 80 ? 'bg-emerald-50 text-emerald-600' : a.overall_score >= 50 ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600'}`}>
                       {a.overall_score}%
                     </span>
