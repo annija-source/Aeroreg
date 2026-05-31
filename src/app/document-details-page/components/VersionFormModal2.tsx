@@ -245,18 +245,13 @@ export default function VersionFormModal({
     const isPdf = uploadedFile.type === 'application/pdf';
 
     // For non-PDF files, read text directly from the file
-    // For PDFs, the server handles extraction via filePath — no client-side reading needed
+    // For PDFs, skip client-side extraction — the server-side pdfExtractor handles it via filePath
     if (!isPdf) {
       documentText = await readFileAsText(uploadedFile);
-      if (!documentText.trim()) {
-        toast.warning('Could not extract text from document. AI extraction skipped.');
-        return;
-      }
     }
 
-    // For PDFs, we must have a filePath to send to the server
-    if (isPdf && !uploadedFilePath) {
-      toast.warning('File path missing — extraction skipped.');
+    if (!isPdf && !documentText.trim()) {
+      toast.warning('Could not extract text from document. AI extraction skipped.');
       return;
     }
 
@@ -269,17 +264,8 @@ export default function VersionFormModal({
     let failedRowsCount = 0;
 
     // Run both extractions in parallel
-    // For PDFs: pass filePath so the server extracts text via OpenAI
+    // For PDFs: pass filePath so the server extracts text via pdf-parse
     // For text files: pass documentText directly
-    const extractionBody = {
-      ...(documentText ? { documentText } : {}),
-      ...(uploadedFilePath ? { filePath: uploadedFilePath } : {}),
-      documentVersionId: savedVersionId,
-      documentId,
-    };
-
-    console.log('[VersionFormModal] Sending extraction body:', JSON.stringify({ ...extractionBody, documentText: extractionBody.documentText ? `[${extractionBody.documentText.length} chars]` : undefined }));
-
     await Promise.all([
       (async () => {
         setExtracting(true);
@@ -287,7 +273,12 @@ export default function VersionFormModal({
           const extractRes = await fetch('/api/ai/extract-regulations', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(extractionBody),
+            body: JSON.stringify({
+              ...(documentText ? { documentText } : {}),
+              ...(uploadedFilePath ? { filePath: uploadedFilePath } : {}),
+              documentVersionId: savedVersionId,
+              documentId,
+            }),
           });
           const extractData = await extractRes.json();
           if (!extractRes.ok || !extractData.success) {
@@ -318,7 +309,12 @@ export default function VersionFormModal({
           const revRes = await fetch('/api/ai/extract-revisions', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(extractionBody),
+            body: JSON.stringify({
+              ...(documentText ? { documentText } : {}),
+              ...(uploadedFilePath ? { filePath: uploadedFilePath } : {}),
+              documentVersionId: savedVersionId,
+              documentId,
+            }),
           });
           const revData = await revRes.json();
           if (!revRes.ok || !revData.success) {
