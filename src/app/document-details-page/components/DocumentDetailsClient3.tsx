@@ -146,12 +146,7 @@ export default function DocumentDetailsClient() {
     if (error) {
       toast.error(`Failed to load versions: ${error.message}`);
     } else {
-      const versions = data ?? [];
-      setVersions(versions);
-      // Auto-select first version if none selected
-      if (versions.length > 0) {
-        setSelectedVersionId(prev => prev === null ? versions[0].id : prev);
-      }
+      setVersions(data ?? []);
     }
     setLoadingVersions(false);
   }, [docId, sortDir]);
@@ -325,13 +320,6 @@ export default function DocumentDetailsClient() {
     fetchDocumentRevisions();
   }, [docId, fetchDocument, fetchVersions, fetchComparisons, fetchDocumentRevisions]);
 
-
-  // Fetch regulations when selected version changes
-  useEffect(() => {
-    if (selectedVersionId !== null && selectedVersionId !== undefined) {
-      fetchExtractedRegulations(selectedVersionId);
-    }
-  }, [selectedVersionId, fetchExtractedRegulations]);
   const handleDeleteVersion = async () => {
     if (!deleteVersion) return;
     setDeleteLoading(true);
