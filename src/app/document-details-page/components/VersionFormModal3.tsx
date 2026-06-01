@@ -278,8 +278,7 @@ export default function VersionFormModal({
       documentId,
     };
 
-    console.log('[VersionFormModal] extractionBody:', JSON.stringify({ ...extractionBody, documentText: extractionBody.documentText ? `[${extractionBody.documentText.length} chars]` : undefined }));
-    toast.info(`Debug: filePath="${extractionBody.filePath ?? 'MISSING'}" isPdf=${isPdf}`);
+    console.log('[VersionFormModal] Sending extraction body:', JSON.stringify({ ...extractionBody, documentText: extractionBody.documentText ? `[${extractionBody.documentText.length} chars]` : undefined }));
 
     await Promise.all([
       (async () => {
@@ -417,12 +416,7 @@ export default function VersionFormModal({
 
       // Trigger both regulation and revision extraction for new version with file
       if (file) {
-        const resolvedPath = filePath ?? '';
-        console.log('[VersionFormModal] filePath being sent to extraction:', resolvedPath);
-        // Call onSaved first to refresh the list, but keep modal open during extraction
-        onSaved();
-        await runAllExtractions(String(insertedVersion.id), file, resolvedPath || undefined);
-        return;
+        await runAllExtractions(String(insertedVersion.id), file, filePath ?? undefined);
       }
     }
     onSaved();
