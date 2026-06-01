@@ -103,14 +103,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'OPENAI_API_KEY is not configured.' }, { status: 500 });
   }
 
-  let body: { analysisId?: number; documentVersionId?: string };
+  let body: { analysisId?: number };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
   }
 
-  const { analysisId, documentVersionId } = body;
+  const { analysisId } = body;
   if (!analysisId) {
     return NextResponse.json({ error: 'analysisId is required.' }, { status: 400 });
   }
@@ -143,38 +143,15 @@ export async function POST(req: NextRequest) {
 
   await setStatus(analysisId, 'analysing');
 
-  // Fetch regulations — filtered by document version if provided
-  let regulationsQuery = supabase
+  const { data: regulations } = await supabase
     .from('regulation')
     .select('id, regulation_number, title, authority, regulation_type')
     .order('regulation_number', { ascending: true })
-    .limit(100);
-
-  if (documentVersionId) {
-    // Get regulations linked to this specific document version
-    const { data: versionRegs } = await supabase
-      .from('regulation_version')
-      .select('regulation_id')
-      .eq('document_version_id', documentVersionId);
-
-    if (versionRegs && versionRegs.length > 0) {
-      const regIds = versionRegs.map(r => r.regulation_id).filter(Boolean);
-      regulationsQuery = supabase
-        .from('regulation')
-        .select('id, regulation_number, title, authority, regulation_type')
-        .in('id', regIds)
-        .order('regulation_number', { ascending: true })
-        .limit(100);
-    }
-  }
-
-  const { data: regulations } = await regulationsQuery;
+    .limit(80);
 
   if (!regulations || regulations.length === 0) {
     await setStatus(analysisId, 'failed', {
-      processing_error: documentVersionId
-        ? 'No regulations found for the selected version. Make sure regulations have been extracted from this version first.'
-        : 'No regulations in database. Upload and process regulatory documents first.',
+      processing_error: 'No regulations in database. Upload and process regulatory documents first.',
     });
     return NextResponse.json({ error: 'No regulations in database.' }, { status: 400 });
   }
@@ -301,7 +278,6 @@ Return a JSON object with exactly this structure:
     compliant_count: compliantCount,
     gap_count: gapCount,
     partial_count: partialCount,
-    ...(documentVersionId ? { document_version_id: documentVersionId } : {}),
   });
 
   return NextResponse.json({

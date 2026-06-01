@@ -3,9 +3,9 @@ import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from 'sonner';
 import {
-  ShieldX, Upload, Plus, Trash2,
+  ShieldCheck, ShieldX, Upload, Plus, Trash2,
   RefreshCw, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
-  FileText, BarChart3, Sparkles, X, ArrowLeft, User, Users, ChevronRight,
+  FileText, BarChart3, Sparkles, X, ArrowLeft, User, Users,
 } from 'lucide-react';
 
 const supabase = createClient();
@@ -42,20 +42,6 @@ interface ComplianceGap {
   gap_description: string;
   recommendation: string;
   affected_annexes: string[];
-}
-
-interface DocumentOption {
-  id: string;
-  title: string;
-  document_code: string;
-}
-
-interface VersionOption {
-  id: string;
-  version_label: string;
-  effective_date: string | null;
-  file_path: string | null;
-  status: string;
 }
 
 const STATUS_LABELS: Record<AnalysisStatus, string> = {
@@ -107,43 +93,8 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
   const [uploading, setUploading] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // Document version selection
-  const [documents, setDocuments] = useState<DocumentOption[]>([]);
-  const [versions, setVersions] = useState<VersionOption[]>([]);
-  const [selectedDocId, setSelectedDocId] = useState<string>('');
-  const [selectedVersionId, setSelectedVersionId] = useState<string>('');
-  const [loadingDocs, setLoadingDocs] = useState(true);
-
-  useEffect(() => {
-    (async () => {
-      setLoadingDocs(true);
-      const { data } = await supabase
-        .from('document')
-        .select('id, title, document_code')
-        .order('title', { ascending: true });
-      setDocuments(data ?? []);
-      setLoadingDocs(false);
-    })();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedDocId) { setVersions([]); setSelectedVersionId(''); return; }
-    (async () => {
-      const { data } = await supabase
-        .from('document_version')
-        .select('id, version_label, effective_date, file_path, status')
-        .eq('document_id', selectedDocId)
-        .order('effective_date', { ascending: false });
-      setVersions(data ?? []);
-      if (data && data.length > 0) setSelectedVersionId(String(data[0].id));
-    })();
-  }, [selectedDocId]);
-
-  const selectedVersion = versions.find(v => String(v.id) === selectedVersionId);
-
   async function handleSubmit() {
     if (!title.trim() || !file) { toast.error('Please enter a title and upload a PDF.'); return; }
-    if (!selectedVersionId) { toast.error('Please select a regulation version to check against.'); return; }
     setUploading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -153,21 +104,10 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
       if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`);
       const { data: row, error: insertErr } = await supabase
         .from('compliance_analysis')
-        .insert({
-          title: title.trim(),
-          client_name: clientName.trim() || null,
-          file_name: file.name,
-          file_path: filePath,
-          status: 'pending',
-          created_by: user?.id ?? null,
-        })
+        .insert({ title: title.trim(), client_name: clientName.trim() || null, file_name: file.name, file_path: filePath, status: 'pending', created_by: user?.id ?? null })
         .select('id').single();
       if (insertErr || !row) throw new Error('Failed to create analysis record.');
-      fetch('/api/ai/compliance-gap', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ analysisId: row.id, documentVersionId: selectedVersionId }),
-      });
+      fetch('/api/ai/compliance-gap', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ analysisId: row.id }) });
       toast.success('Analysis started!');
       onCreated(); onClose();
     } catch (err) {
@@ -177,84 +117,36 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
           <h2 className="text-base font-semibold text-slate-900">New Compliance Analysis</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X size={18} /></button>
         </div>
         <div className="px-6 py-5 space-y-4">
-
-          {/* Title */}
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Analysis title *</label>
             <input type="text" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. AirlineX Ops Manual Q2 2026"
               className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
-
-          {/* Client name */}
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1.5">Client name</label>
             <input type="text" value={clientName} onChange={e => setClientName(e.target.value)} placeholder="e.g. AirlineX Ltd"
               className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
-
-          {/* Regulation document */}
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Check against regulation *</label>
-            {loadingDocs ? (
-              <div className="flex items-center gap-2 text-xs text-slate-400 py-2"><RefreshCw size={12} className="animate-spin" /> Loading documents...</div>
-            ) : documents.length === 0 ? (
-              <p className="text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2">No documents found. Upload and process regulatory documents first.</p>
-            ) : (
-              <select value={selectedDocId} onChange={e => setSelectedDocId(e.target.value)}
-                className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                <option value="">— Select regulation document —</option>
-                {documents.map(d => (
-                  <option key={d.id} value={d.id}>{d.title} {d.document_code ? `(${d.document_code})` : ''}</option>
-                ))}
-              </select>
-            )}
-          </div>
-
-          {/* Version selection */}
-          {selectedDocId && (
-            <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1.5">Regulation version *</label>
-              {versions.length === 0 ? (
-                <p className="text-xs text-amber-600 bg-amber-50 rounded-xl px-3 py-2">No versions found for this document.</p>
-              ) : (
-                <select value={selectedVersionId} onChange={e => setSelectedVersionId(e.target.value)}
-                  className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                  {versions.map(v => (
-                    <option key={v.id} value={String(v.id)}>
-                      {v.version_label} {v.effective_date ? `— effective ${v.effective_date}` : ''} ({v.status})
-                    </option>
-                  ))}
-                </select>
-              )}
-              {selectedVersion && (
-                <p className="text-[11px] text-slate-400 mt-1.5 px-1">
-                  {selectedVersion.file_path ? '✓ Has uploaded PDF — regulations will be extracted from it' : '⚠ No PDF uploaded for this version — will use stored regulations'}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* PDF upload */}
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Client procedures document (PDF) *</label>
+            <label className="block text-xs font-semibold text-slate-600 mb-1.5">Operator procedures PDF *</label>
             <div onClick={() => fileRef.current?.click()}
               className="flex flex-col items-center gap-2 px-4 py-6 border-2 border-dashed border-slate-200 rounded-xl cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition-all">
               {file
                 ? <><FileText size={22} className="text-blue-500" /><span className="text-sm font-medium text-slate-700">{file.name}</span></>
-                : <><Upload size={22} className="text-slate-300" /><span className="text-sm text-slate-400">Click to upload client PDF</span></>}
+                : <><Upload size={22} className="text-slate-300" /><span className="text-sm text-slate-400">Click to upload PDF</span></>}
             </div>
             <input ref={fileRef} type="file" accept=".pdf" className="hidden" onChange={e => setFile(e.target.files?.[0] ?? null)} />
           </div>
         </div>
         <div className="flex gap-3 px-6 py-4 border-t border-slate-100">
           <button onClick={onClose} className="flex-1 py-2.5 text-sm font-medium text-slate-600 bg-slate-100 rounded-xl hover:bg-slate-200">Cancel</button>
-          <button onClick={handleSubmit} disabled={uploading || !selectedVersionId}
+          <button onClick={handleSubmit} disabled={uploading}
             className="flex-1 flex items-center justify-center gap-2 py-2.5 text-sm font-semibold text-white bg-blue-600 rounded-xl hover:bg-blue-700 disabled:opacity-60">
             {uploading ? <RefreshCw size={15} className="animate-spin" /> : <Sparkles size={15} />}
             {uploading ? 'Starting...' : 'Run Analysis'}
