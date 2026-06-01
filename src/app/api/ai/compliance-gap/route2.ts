@@ -164,15 +164,7 @@ export async function POST(req: NextRequest) {
 You analyse aviation operators' procedures documents and identify compliance gaps against known regulatory requirements.
 Always respond with valid JSON only — no markdown, no code fences, no extra text.`;
 
-  const userPrompt = `You are auditing an aviation operator's procedures document against EASA regulations.
-
-IMPORTANT ASSESSMENT GUIDANCE:
-- A regulation is "compliant" if the operator's document addresses the SUBJECT MATTER of that regulation, even if the exact regulation number is not cited. For example, if the document describes fuel planning procedures, it is compliant with CAT.OP.MPA.150 (Fuel Policy) even without citing that number.
-- A regulation is "partial" if some but not all key requirements are addressed.
-- A regulation is "gap" only if the subject matter is genuinely absent or clearly insufficient.
-- Most well-written operations manuals will be largely compliant. Do NOT mark everything as a gap.
-- Severity should be "critical" only for genuine safety-critical absences (no emergency procedures, no airworthiness). Use "high", "medium", or "low" for most gaps.
-- An operator that has documented: organisation, crew licensing, FTL, SMS, fuel, ground ops, cabin crew, dangerous goods, security, emergency response, and maintenance is HIGHLY COMPLIANT and should score 75-90%.
+  const userPrompt = `You are auditing an aviation operator's procedures document against a set of known regulatory instruments.
 
 KNOWN REGULATIONS IN THE DATABASE:
 ${regulationList}
@@ -182,12 +174,12 @@ OPERATOR PROCEDURES DOCUMENT (extracted text):
 ${procedureText.slice(0, 12000)}
 """
 
-Assess each regulation above. Look for the SUBSTANCE of the requirement being addressed, not just the regulation number being cited.
+For each regulation listed above, assess whether the operator's procedures document addresses it.
 
 Return a JSON object with exactly this structure:
 {
-  "overall_score": <integer 0-100, reflecting genuine compliance level>,
-  "ai_summary": "<2-4 sentence executive summary of compliance status>",
+  "overall_score": <integer 0-100>,
+  "ai_summary": "<2-4 sentence executive summary>",
   "gaps": [
     {
       "regulation_number": "<exact number from the list above>",
