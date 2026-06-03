@@ -5,7 +5,7 @@ import { toast } from 'sonner';
 import {
   ShieldX, Upload, Plus, Trash2,
   RefreshCw, ChevronDown, ChevronUp, AlertTriangle, CheckCircle2,
-  FileText, BarChart3, Sparkles, X, ArrowLeft, User, Users,
+  FileText, BarChart3, Sparkles, X, ArrowLeft, User, Users, ChevronRight,
 } from 'lucide-react';
 
 const supabase = createClient();
