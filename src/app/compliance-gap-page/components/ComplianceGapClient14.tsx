@@ -298,8 +298,7 @@ function GapRow({ gap, currentUserId, userProfiles, onSolvedChange }: {
     <div className={`border rounded-xl overflow-hidden transition-all ${isSolved ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-100 bg-white'}`}>
       
       {/* Main row — click to expand */}
-      <div className="flex items-center">
-      <button onClick={() => setOpen(o => !o)} className="flex-1 flex items-start gap-3 px-4 py-3 text-left hover:bg-slate-50/50 transition-colors min-w-0">
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-slate-50/50 transition-colors">
         {statusIcon}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -330,37 +329,39 @@ function GapRow({ gap, currentUserId, userProfiles, onSolvedChange }: {
         {open ? <ChevronUp size={14} className="text-slate-400 shrink-0 mt-1" /> : <ChevronDown size={14} className="text-slate-400 shrink-0 mt-1" />}
       </button>
 
-      {/* Inline action buttons - right side of row */}
+      {/* Action buttons row — always visible for non-compliant items */}
       {gap.status !== 'compliant' && (
-        <div className="flex items-center gap-1.5 pr-3 shrink-0">
-          {gap.regulation_id && (
-            <a href={`/regulations-page/detail?id=${gap.regulation_id}`}
-              target="_blank" rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              title="View regulation"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-              <ExternalLink size={14} />
-            </a>
-          )}
+        <div className="flex items-center gap-2 px-4 pb-3 pt-0">
+          {/* Solved / Unsolved button — larger and clear */}
           <button
             onClick={toggleSolved}
             disabled={toggling}
-            title={isSolved ? 'Mark as unsolved' : 'Mark as solved'}
-            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all disabled:opacity-50 ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 ${
               isSolved
-                ? 'bg-slate-100 text-slate-500 hover:bg-amber-50 hover:text-amber-600'
-                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                ? 'bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-slate-200'
+                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
             }`}>
             {toggling
-              ? <RefreshCw size={12} className="animate-spin" />
-              : isSolved ? <XSquare size={12} /> : <CheckSquare size={12} />}
-            {isSolved ? 'Unsolved' : 'Solved'}
+              ? <RefreshCw size={13} className="animate-spin" />
+              : isSolved
+                ? <XSquare size={13} />
+                : <CheckSquare size={13} />}
+            {isSolved ? 'Mark as unsolved' : 'Mark as solved'}
           </button>
+
+          {/* View regulation link */}
+          {gap.regulation_id && (
+            <a
+              href={`/regulations-page/detail?id=${gap.regulation_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={e => e.stopPropagation()}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-all">
+              <ExternalLink size={13} /> View regulation
+            </a>
+          )}
         </div>
       )}
-      </div>
-
-
 
       {/* Expanded details */}
       {open && (
@@ -486,17 +487,17 @@ function AnalysisDetail({ analysis, onBack, onDelete }: {
               {analysis.client_name && <span className="text-xs text-slate-400">{analysis.client_name}</span>}
               <span className="flex items-center gap-1 text-xs text-slate-400"><User size={11} /> {analysis.creator_name ?? 'Unknown'}</span>
               <span className="text-xs text-slate-400">{formatDate(analysis.created_at)}</span>
-              {analysis.file_name && (
-                <span className="flex items-center gap-1 text-xs text-slate-400">
-                  <FileText size={11} /> {analysis.file_name}
-                </span>
-              )}
               {analysis.document_version_id && (
                 <a href={`/document-details-page?id=${analysis.document_version_id}`}
                   target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100 transition-colors">
-                  <ExternalLink size={11} /> Open regulation document
+                  className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 hover:underline">
+                  <FileText size={11} /> View regulation document
                 </a>
+              )}
+              {analysis.file_name && !analysis.document_version_id && (
+                <span className="flex items-center gap-1 text-xs text-slate-400">
+                  <FileText size={11} /> {analysis.file_name}
+                </span>
               )}
             </div>
           </div>
