@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
     .from('regulation')
     .select('id, regulation_number, title, authority, regulation_type')
     .order('regulation_number', { ascending: true })
-    .limit(30);
+    .limit(100);
 
   if (documentVersionId) {
     // Get regulations linked to this specific document version
@@ -212,7 +212,7 @@ ${regulationList}
 
 OPERATOR PROCEDURES DOCUMENT (extracted text):
 """
-${procedureText.slice(0, 4000)}
+${procedureText.slice(0, 12000)}
 """
 
 Assess each regulation above. Look for the SUBSTANCE of the requirement being addressed, not just the regulation number being cited.
@@ -251,27 +251,23 @@ Return a JSON object with exactly this structure:
   };
 
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 25000);
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
-      signal: controller.signal,
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${openAiApiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
         ],
-        max_tokens: 2000,
+        max_tokens: 4000,
         temperature: 0.2,
       }),
     });
 
-    clearTimeout(timeout);
     const data = await response.json();
     const raw: string = data?.choices?.[0]?.message?.content ?? '';
 
@@ -280,10 +276,8 @@ Return a JSON object with exactly this structure:
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     parsed = JSON.parse(cleaned);
   } catch (err) {
-    const msg = err instanceof Error
-      ? (err.name === 'AbortError' ? 'Analysis timed out — try again with fewer regulations selected.' : err.message)
-      : 'AI analysis failed.';
-    await setStatus(analysisId as number, 'failed', { processing_error: msg });
+    const msg = err instanceof Error ? err.message : 'AI analysis failed.';
+    await setStatus(analysisId, 'failed', { processing_error: msg });
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
