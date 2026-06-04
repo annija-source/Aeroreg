@@ -47,21 +47,11 @@ export async function POST(req: NextRequest) {
 
   // Wrap everything — always set a final status
   try {
-    // Save document_version_id + regulation title/version to the analysis record
+    // Save document_version_id to the analysis record immediately
     if (documentVersionId) {
-      const { data: versionInfo } = await adminClient()
-        .from('document_version')
-        .select('version_label, document:document(title)')
-        .eq('id', documentVersionId)
-        .single();
-
       await adminClient()
         .from('compliance_analysis')
-        .update({
-          document_version_id: Number(documentVersionId),
-          regulation_document_title: (versionInfo?.document as any)?.title ?? null,
-          regulation_version_label: versionInfo?.version_label ?? null,
-        })
+        .update({ document_version_id: Number(documentVersionId) })
         .eq('id', analysisId);
     }
 
