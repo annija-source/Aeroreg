@@ -107,14 +107,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'OPENAI_API_KEY is not configured.' }, { status: 500 });
   }
 
-  let body: { analysisId?: number; documentVersionId?: string; clientText?: string };
+  let body: { analysisId?: number; documentVersionId?: string };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'Invalid request body.' }, { status: 400 });
   }
 
-  const { analysisId, documentVersionId, clientText } = body;
+  const { analysisId, documentVersionId } = body;
   if (!analysisId) {
     return NextResponse.json({ error: 'analysisId is required.' }, { status: 400 });
   }
@@ -133,22 +133,16 @@ export async function POST(req: NextRequest) {
 
   await setStatus(analysisId, 'extracting');
 
-  // Use client-provided text if available (faster — avoids server-side PDF download timeout)
-  let procedureText = clientText ?? '';
+  if (!analysis.file_path) {
+    await setStatus(analysisId, 'failed', { processing_error: 'No file path on this analysis record.' });
+    return NextResponse.json({ error: 'No file attached.' }, { status: 400 });
+  }
 
-  if (!procedureText || procedureText.length < 100) {
-    // Fall back to server-side extraction
-    if (!analysis.file_path) {
-      await setStatus(analysisId, 'failed', { processing_error: 'No file path on this analysis record.' });
-      return NextResponse.json({ error: 'No file attached.' }, { status: 400 });
-    }
-    const { text: extracted, error: pdfError } = await extractPdfText(analysis.file_path);
-    if (!extracted) {
-      // Use filename-based fallback — don't fail completely
-      procedureText = `Operator procedures document: ${analysis.file_name ?? 'unknown'}. Client: ${analysis.client_name ?? 'unknown'}.`;
-    } else {
-      procedureText = extracted;
-    }
+  const { text: procedureText, error: pdfError } = await extractPdfText(analysis.file_path);
+
+  if (!procedureText) {
+    await setStatus(analysisId, 'failed', { processing_error: pdfError ?? 'PDF extraction failed.' });
+    return NextResponse.json({ error: pdfError ?? 'PDF extraction failed.' }, { status: 400 });
   }
 
   await setStatus(analysisId, 'analysing');

@@ -163,41 +163,10 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
         })
         .select('id').single();
       if (insertErr || !row) throw new Error('Failed to create analysis record.');
-      // Read PDF text client-side before sending to API
-      // This avoids Vercel serverless timeout from downloading + parsing PDF
-      let clientText = '';
-      try {
-        const reader = new FileReader();
-        clientText = await new Promise<string>((resolve) => {
-          reader.onload = () => {
-            const binary = reader.result as string;
-            // Extract readable text from PDF binary
-            const parts: string[] = [];
-            const btEt = binary.match(/BT([\s\S]*?)ET/g) ?? [];
-            for (const block of btEt) {
-              const matches = block.match(/\(([^)]{1,200})\)\s*(?:Tj|'|")/g) ?? [];
-              for (const m of matches) {
-                const text = m.replace(/\(([^)]*)\)\s*(?:Tj|'|")/, '$1')
-                  .replace(/[^ -~]/g, ' ').trim();
-                if (text.length > 1) parts.push(text);
-              }
-            }
-            resolve(parts.join(' ').replace(/ {3,}/g, ' ').trim());
-          };
-          reader.readAsBinaryString(file);
-        });
-      } catch (e) {
-        console.warn('Client-side PDF extraction failed:', e);
-      }
-
       fetch('/api/ai/compliance-gap', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          analysisId: row.id,
-          documentVersionId: selectedVersionId,
-          clientText: clientText || undefined,
-        }),
+        body: JSON.stringify({ analysisId: row.id, documentVersionId: selectedVersionId }),
       });
       toast.success('Analysis started!');
       onCreated(); onClose();
