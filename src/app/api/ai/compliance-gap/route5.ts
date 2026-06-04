@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
-// Increase Vercel function timeout to 60 seconds
-export const maxDuration = 60;
-export const dynamic = 'force-dynamic';
-
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey =
