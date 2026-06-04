@@ -47,14 +47,6 @@ export async function POST(req: NextRequest) {
 
   // Wrap everything — always set a final status
   try {
-    // Save document_version_id to the analysis record immediately
-    if (documentVersionId) {
-      await adminClient()
-        .from('compliance_analysis')
-        .update({ document_version_id: Number(documentVersionId) })
-        .eq('id', analysisId);
-    }
-
     await setStatus(analysisId, 'analysing');
 
     // ── Get regulations ──────────────────────────────────────────────────────
