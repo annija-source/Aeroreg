@@ -149,18 +149,7 @@ async function extractFromChunk(
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
         {
           role: 'user',
-          content: `Extract all aviation regulations from this document text. The text is from an EASA/ICAO regulatory document.
-
-Return a JSON array of regulation objects. Each object must have:
-- regulation_number (e.g. "Commission Regulation (EU) No 965/2012", "ED Decision 2014/017/R")
-- title (descriptive title)
-- regulation_type (one of: "Commission Regulation", "ED Decision", "Implementing Regulation", "Delegated Regulation", "ICAO Standard", "National Regulation")
-- authority (e.g. "EASA", "ICAO", "European Commission")
-- applicability_date (ISO date string or null)
-- annex_references (array of strings like ["Part-CAT", "Annex I", "Part-ORO"])
-
-Document text:
-${chunk}`,
+          content: `Extract all regulations from the following EASA Air Operations document text:\n\n${chunk}`,
         },
       ],
       max_tokens: 2000,

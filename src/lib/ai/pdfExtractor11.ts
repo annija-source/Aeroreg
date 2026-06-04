@@ -80,19 +80,10 @@ export async function extractTextFromPdf(filePath: string): Promise<PdfExtractio
 
   // Try direct text extraction first (works for our generated PDFs and simple text PDFs)
   const directText = extractFromRawPdf(buffer);
-
-  // Validate quality: readable text should have mostly normal ASCII words
-  // If less than 20% of characters are letters/spaces, it's binary garbage
-  const letterCount = (directText.match(/[a-zA-Z ]/g) ?? []).length;
-  const qualityRatio = directText.length > 0 ? letterCount / directText.length : 0;
-  const hasRegulationKeywords = /regulation|annex|article|easa|icao|commission|directive/i.test(directText);
-
-  if (directText.length > 300 && qualityRatio > 0.5 && hasRegulationKeywords) {
-    console.log(`[pdfExtractor] Direct extraction got ${directText.length} chars (quality: ${(qualityRatio*100).toFixed(0)}%)`);
+  if (directText.length > 300) {
+    console.log(`[pdfExtractor] Direct extraction got ${directText.length} chars`);
     return { text: directText, extracted_text_length: directText.length, extraction_method: 'openai-pdf', extraction_success: true };
   }
-
-  console.log(`[pdfExtractor] Direct extraction quality too low (${(qualityRatio*100).toFixed(0)}%), falling back to OpenAI`);
 
   // Trim for OpenAI if large
   if (buffer.length > MAX_BYTES) buffer = buffer.slice(0, MAX_BYTES);
