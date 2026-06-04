@@ -30,7 +30,6 @@ interface ComplianceAnalysis {
   created_at: string;
   created_by: string | null;
   creator_name?: string;
-  document_version_id?: number | null;
 }
 
 interface ComplianceGap {
@@ -251,153 +250,135 @@ function NewAnalysisModal({ onClose, onCreated }: { onClose: () => void; onCreat
   );
 }
 
-// ── Gap Row ────────────────────────────────────────────────────────────────── 
+// ── Gap Row ───────────────────────────────────────────────────────────────────
 function GapRow({ gap, currentUserId, userProfiles, onSolvedChange }: {
   gap: ComplianceGap;
   currentUserId: string | null;
   userProfiles: Record<string, string>;
-  onSolvedChange: (gapId: number, solved: boolean, userId: string | null, solvedAt: string | null) => void;
+  onSolvedChange: (gapId: number, solved: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [toggling, setToggling] = useState(false);
-  const isSolved = gap.is_solved;
-  const solverName = gap.solved_by ? (userProfiles[gap.solved_by] ?? 'Unknown') : null;
 
-  async function toggleSolved(e: React.MouseEvent) {
-    e.stopPropagation();
+  const isSolved = gap.is_solved;
+  const effectiveStatus = isSolved ? 'solved' : gap.status;
+
+  const rowBg = isSolved ? 'bg-emerald-50/40' : '';
+
+  const statusIcon = isSolved
+    ? <CheckSquare size={16} className="text-emerald-500 shrink-0" />
+    : gap.status === 'compliant'
+      ? <CheckCircle2 size={16} className="text-emerald-500 shrink-0" />
+      : gap.status === 'partial'
+        ? <AlertTriangle size={16} className="text-amber-500 shrink-0" />
+        : <ShieldX size={16} className="text-red-500 shrink-0" />;
+
+  async function toggleSolved() {
     setToggling(true);
     try {
       const newSolved = !isSolved;
       const { data: { user } } = await supabase.auth.getUser();
-      const solvedAt = newSolved ? new Date().toISOString() : null;
       const { error } = await supabase
         .from('compliance_gap')
         .update({
           is_solved: newSolved,
           solved_by: newSolved ? (user?.id ?? null) : null,
-          solved_at: solvedAt,
+          solved_at: newSolved ? new Date().toISOString() : null,
         })
         .eq('id', gap.id);
       if (error) throw error;
-      onSolvedChange(gap.id, newSolved, newSolved ? (user?.id ?? null) : null, solvedAt);
+      onSolvedChange(gap.id, newSolved);
       toast.success(newSolved ? 'Marked as solved!' : 'Marked as unsolved');
     } catch (err) {
       toast.error('Failed to update status');
     } finally { setToggling(false); }
   }
 
-  const statusIcon = isSolved
-    ? <CheckSquare size={16} className="text-emerald-500 shrink-0 mt-0.5" />
-    : gap.status === 'compliant'
-      ? <CheckCircle2 size={16} className="text-emerald-500 shrink-0 mt-0.5" />
-      : gap.status === 'partial'
-        ? <AlertTriangle size={16} className="text-amber-500 shrink-0 mt-0.5" />
-        : <ShieldX size={16} className="text-red-500 shrink-0 mt-0.5" />;
+  const solverName = gap.solved_by ? (userProfiles[gap.solved_by] ?? 'Unknown') : null;
 
   return (
-    <div className={`border rounded-xl overflow-hidden transition-all ${isSolved ? 'border-emerald-200 bg-emerald-50/30' : 'border-slate-100 bg-white'}`}>
-      
-      {/* Main row — click to expand */}
-      <button onClick={() => setOpen(o => !o)} className="w-full flex items-start gap-3 px-4 py-3 text-left hover:bg-slate-50/50 transition-colors">
-        {statusIcon}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className={`text-sm font-semibold ${isSolved ? 'text-emerald-700' : 'text-slate-800'}`}>
+    <div className={`border rounded-xl overflow-hidden transition-colors ${isSolved ? 'border-emerald-200' : 'border-slate-100'} ${rowBg}`}>
+      <div className="flex items-center gap-3 px-4 py-3">
+        {/* Expand button */}
+        <button onClick={() => setOpen(o => !o)} className="flex items-center gap-3 flex-1 text-left min-w-0">
+          {statusIcon}
+          <div className="flex-1 min-w-0">
+            <span className={`text-sm font-medium truncate block ${isSolved ? 'text-emerald-700 line-through opacity-70' : 'text-slate-800'}`}>
               {gap.regulation_number}
             </span>
-            {/* Severity badge */}
-            {!isSolved && gap.status !== 'compliant' && (
-              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize ${severityStyle[gap.severity]}`}>
-                {gap.severity}
-              </span>
-            )}
-            {isSolved && (
-              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 border border-emerald-200">
-                ✓ Solved
+            <span className="text-xs text-slate-400 truncate block">{gap.regulation_title}</span>
+            {isSolved && solverName && (
+              <span className="text-[10px] text-emerald-600 flex items-center gap-1 mt-0.5">
+                <User size={9} /> Solved by {solverName} · {gap.solved_at ? formatDate(gap.solved_at) : ''}
               </span>
             )}
           </div>
-          <span className="text-xs text-slate-400 block mt-0.5">{gap.regulation_title}</span>
-          {/* Solver info */}
-          {isSolved && (
-            <span className="text-[11px] text-emerald-600 flex items-center gap-1 mt-1">
-              <User size={10} />
-              {solverName ?? 'Unknown'} · {gap.solved_at ? formatDate(gap.solved_at) : ''}
-            </span>
-          )}
-        </div>
-        {open ? <ChevronUp size={14} className="text-slate-400 shrink-0 mt-1" /> : <ChevronDown size={14} className="text-slate-400 shrink-0 mt-1" />}
-      </button>
+        </button>
 
-      {/* Action buttons row — always visible for non-compliant items */}
-      {gap.status !== 'compliant' && (
-        <div className="flex items-center gap-2 px-4 pb-3 pt-0">
-          {/* Solved / Unsolved button — larger and clear */}
-          <button
-            onClick={toggleSolved}
-            disabled={toggling}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition-all disabled:opacity-50 ${
-              isSolved
-                ? 'bg-slate-100 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-slate-200'
-                : 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200'
-            }`}>
-            {toggling
-              ? <RefreshCw size={13} className="animate-spin" />
-              : isSolved
-                ? <XSquare size={13} />
-                : <CheckSquare size={13} />}
-            {isSolved ? 'Mark as unsolved' : 'Mark as solved'}
+        {/* Severity badge */}
+        {!isSolved && gap.status !== 'compliant' && (
+          <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full capitalize shrink-0 ${severityStyle[gap.severity]}`}>
+            {gap.severity}
+          </span>
+        )}
+        {isSolved && (
+          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-600 border border-emerald-200 shrink-0">
+            Solved
+          </span>
+        )}
+
+        {/* Go to regulation button */}
+        {gap.regulation_id && (
+          <a href={`/regulations-page/detail?id=${gap.regulation_id}`} target="_blank" rel="noopener noreferrer"
+            className="p-1.5 text-slate-300 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors shrink-0"
+            title="View regulation" onClick={e => e.stopPropagation()}>
+            <ExternalLink size={13} />
+          </a>
+        )}
+
+        {/* Solved toggle button */}
+        {gap.status !== 'compliant' && (
+          <button onClick={toggleSolved} disabled={toggling}
+            className={`p-1.5 rounded-lg transition-colors shrink-0 ${isSolved
+              ? 'text-emerald-500 hover:text-amber-500 hover:bg-amber-50'
+              : 'text-slate-300 hover:text-emerald-500 hover:bg-emerald-50'}`}
+            title={isSolved ? 'Mark as unsolved' : 'Mark as solved'}>
+            {toggling ? <RefreshCw size={13} className="animate-spin" /> : isSolved ? <XSquare size={13} /> : <CheckSquare size={13} />}
           </button>
+        )}
 
-          {/* View regulation link */}
-          {gap.regulation_id && (
-            <a
-              href={`/regulations-page/detail?id=${gap.regulation_id}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={e => e.stopPropagation()}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200 transition-all">
-              <ExternalLink size={13} /> View regulation
-            </a>
-          )}
-        </div>
-      )}
+        <button onClick={() => setOpen(o => !o)} className="text-slate-300 shrink-0">
+          {open ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </button>
+      </div>
 
       {/* Expanded details */}
-      {open && (
-        <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3 bg-slate-50/40">
-          {isSolved ? (
-            <div className="flex items-start gap-2 text-sm text-emerald-700 bg-emerald-50 rounded-xl px-3 py-2.5">
-              <CheckSquare size={15} className="shrink-0 mt-0.5" />
-              <div>
-                <p className="font-semibold">This gap has been resolved</p>
-                <p className="text-[11px] text-emerald-600 mt-0.5">
-                  Marked as solved by {solverName ?? 'Unknown'} on {gap.solved_at ? formatDate(gap.solved_at) : 'unknown date'}
-                </p>
-              </div>
+      {open && !isSolved && gap.status !== 'compliant' && (
+        <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3 bg-white/60">
+          {gap.gap_description && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Gap identified</p>
+              <p className="text-sm text-slate-700 leading-relaxed">{gap.gap_description}</p>
             </div>
-          ) : (
-            <>
-              {gap.gap_description && (
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Gap identified</p>
-                  <p className="text-sm text-slate-700 leading-relaxed">{gap.gap_description}</p>
-                </div>
-              )}
-              {gap.recommendation && (
-                <div>
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Recommendation</p>
-                  <p className="text-sm text-blue-700 leading-relaxed">{gap.recommendation}</p>
-                </div>
-              )}
-              {gap.affected_annexes?.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {gap.affected_annexes.map(a => (
-                    <span key={a} className="text-[10px] font-medium px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-100">{a}</span>
-                  ))}
-                </div>
-              )}
-            </>
+          )}
+          {gap.recommendation && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Recommendation</p>
+              <p className="text-sm text-blue-700 leading-relaxed">{gap.recommendation}</p>
+            </div>
+          )}
+          {gap.affected_annexes?.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {gap.affected_annexes.map(a => (
+                <span key={a} className="text-[10px] font-medium px-2 py-0.5 bg-blue-50 text-blue-600 rounded-full border border-blue-100">{a}</span>
+              ))}
+            </div>
+          )}
+          {gap.regulation_id && (
+            <a href={`/regulations-page/detail?id=${gap.regulation_id}`} target="_blank" rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors">
+              <ExternalLink size={12} /> View full regulation
+            </a>
           )}
         </div>
       )}
@@ -443,15 +424,12 @@ function AnalysisDetail({ analysis, onBack, onDelete }: {
     })();
   }, [analysis.id]);
 
-  function handleSolvedChange(gapId: number, solved: boolean, userId: string | null, solvedAt: string | null) {
+  function handleSolvedChange(gapId: number, solved: boolean) {
     setGaps(prev => {
-      const updated = prev.map(g => g.id === gapId
-        ? { ...g, is_solved: solved, solved_by: userId, solved_at: solvedAt }
-        : g
-      );
-      const newScore = calcScore(updated);
-      setLiveScore(newScore);
+      const updated = prev.map(g => g.id === gapId ? { ...g, is_solved: solved } : g);
+      setLiveScore(calcScore(updated));
       // Update score in DB
+      const newScore = calcScore(updated);
       supabase.from('compliance_analysis')
         .update({ overall_score: newScore, updated_at: new Date().toISOString() })
         .eq('id', analysis.id).then(() => {});
@@ -487,18 +465,6 @@ function AnalysisDetail({ analysis, onBack, onDelete }: {
               {analysis.client_name && <span className="text-xs text-slate-400">{analysis.client_name}</span>}
               <span className="flex items-center gap-1 text-xs text-slate-400"><User size={11} /> {analysis.creator_name ?? 'Unknown'}</span>
               <span className="text-xs text-slate-400">{formatDate(analysis.created_at)}</span>
-              {analysis.document_version_id && (
-                <a href={`/document-details-page?id=${analysis.document_version_id}`}
-                  target="_blank" rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 hover:underline">
-                  <FileText size={11} /> View regulation document
-                </a>
-              )}
-              {analysis.file_name && !analysis.document_version_id && (
-                <span className="flex items-center gap-1 text-xs text-slate-400">
-                  <FileText size={11} /> {analysis.file_name}
-                </span>
-              )}
             </div>
           </div>
         </div>
@@ -681,17 +647,12 @@ export default function ComplianceGapClient() {
                 )}
                 <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-50">
                   <span className="flex items-center gap-1 text-[11px] text-slate-400"><User size={10} /> {a.creator_name ?? 'Unknown'}</span>
+                  <span className="text-[11px] text-slate-300">{formatDate(a.created_at)}</span>
+                </div>
+                <div className="mt-1">
                   <span className={`text-[11px] font-medium ${isRunning ? 'text-blue-500' : a.status === 'complete' ? 'text-emerald-500' : a.status === 'failed' ? 'text-red-500' : 'text-slate-400'}`}>
                     {STATUS_LABELS[a.status]}
                   </span>
-                </div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-[11px] text-slate-300">{formatDate(a.created_at)}</span>
-                  {a.file_name && (
-                    <span className="flex items-center gap-1 text-[11px] text-slate-400">
-                      <FileText size={10} /> {a.file_name}
-                    </span>
-                  )}
                 </div>
               </button>
             );
