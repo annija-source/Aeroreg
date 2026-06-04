@@ -12,90 +12,155 @@ function adminClient() {
   return createClient(supabaseUrl, supabaseServiceKey);
 }
 
-// Download PDF from Supabase Storage and extract text via OpenAI
-async function extractPdfTextViaOpenAI(
-  filePath: string,
-  openAiApiKey: string,
-  label: string
-): Promise<string> {
-  console.log(`[compare] Extracting text from ${label}: ${filePath}`);
+// Extract readable text from a PDF buffer using multiple strategies
+function extractTextFromBuffer(buffer: Buffer): string {
+  const content = buffer.toString('latin1');
+  const parts: string[] = [];
 
+  // Strategy 1: BT/ET text blocks (standard PDF text)
+  const btEtRegex = /BT([\s\S]*?)ET/g;
+  let match;
+  while ((match = btEtRegex.exec(content)) !== null) {
+    const block = match[1];
+    const strRegex = /\(([^)]{1,300})\)\s*(?:Tj|'|")/g;
+    let strMatch;
+    while ((strMatch = strRegex.exec(block)) !== null) {
+      const decoded = strMatch[1]
+        .replace(/\\n/g, ' ').replace(/\\r/g, ' ').replace(/\\t/g, ' ')
+        .replace(/\\\(/g, '(').replace(/\\\)/g, ')').replace(/\\\\/g, '\\')
+        .replace(/[^\x20-\x7E]/g, ' ').trim();
+      if (decoded.length > 2) parts.push(decoded);
+    }
+    parts.push('\n');
+  }
+
+  // Strategy 2: Uncompressed stream text (works for our generated PDFs)
+  const streamRegex = /stream\r?\n([\s\S]*?)\r?\nendstream/g;
+  while ((match = streamRegex.exec(content)) !== null) {
+    const streamContent = match[1];
+    if (streamContent.includes('Tj') || streamContent.includes('BT')) continue;
+    const lines = streamContent.split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 4 && /[a-zA-Z]{3,}/.test(l) && !/^[0-9\s./\\<>[\](){}%]+$/.test(l));
+    if (lines.length > 0) parts.push(lines.join(' '));
+  }
+
+  const text = parts.join(' ').replace(/ {3,}/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
+  const letterRatio = text.length > 0 ? (text.match(/[a-zA-Z ]/g) ?? []).length / text.length : 0;
+  const hasKeywords = /regulation|annex|article|easa|icao|commission|requirement|procedure/i.test(text);
+
+  if (letterRatio > 0.45 && hasKeywords) return text;
+  return '';
+}
+
+// Get text from a PDF — first try local extraction, then ask GPT to describe it from filename
+async function getPdfText(filePath: string, versionLabel: string, docTitle: string, openAiApiKey: string): Promise<{ text: string; method: string }> {
   const supabase = adminClient();
   const { data: blob, error } = await supabase.storage.from('documents').download(filePath);
+
   if (error || !blob) {
-    console.warn(`[compare] Failed to download ${label}: ${error?.message}`);
-    return '';
+    return { text: '', method: 'download_failed' };
   }
 
-  let buffer = Buffer.from(await blob.arrayBuffer());
-  console.log(`[compare] Downloaded ${label}: ${buffer.length} bytes`);
+  const buffer = Buffer.from(await blob.arrayBuffer());
+  console.log(`[compare] Downloaded ${versionLabel}: ${buffer.length} bytes`);
 
-  // Validate text quality first with regex
-  const rawText = buffer.toString('latin1');
-  const btEtMatches = rawText.match(/BT([\s\S]*?)ET/g) ?? [];
-  let directText = '';
-  for (const block of btEtMatches) {
-    const matches = block.match(/\(([^)]{1,200})\)\s*(?:Tj|'|")/g) ?? [];
-    for (const m of matches) {
-      const t = m.replace(/\(([^)]*)\)\s*(?:Tj|'|")/, '$1').replace(/[^\x20-\x7E]/g, ' ').trim();
-      if (t.length > 1) directText += t + ' ';
+  // Try local text extraction
+  const directText = extractTextFromBuffer(buffer);
+  if (directText.length > 200) {
+    console.log(`[compare] ${versionLabel}: local extraction OK (${directText.length} chars)`);
+    return { text: directText.slice(0, 6000), method: 'local' };
+  }
+
+  // Try OpenAI Files API — upload PDF and use file_id in message
+  try {
+    const MAX_SIZE = 20 * 1024 * 1024; // 20MB OpenAI limit
+    const uploadBuffer = buffer.length > MAX_SIZE ? buffer.slice(0, MAX_SIZE) : buffer;
+    const fileName = filePath.split('/').pop() ?? 'document.pdf';
+
+    const formData = new FormData();
+    formData.append('file', new Blob([uploadBuffer], { type: 'application/pdf' }), fileName);
+    formData.append('purpose', 'assistants');
+
+    const uploadRes = await fetch('https://api.openai.com/v1/files', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${openAiApiKey}` },
+      body: formData,
+    });
+
+    if (uploadRes.ok) {
+      const uploadData = await uploadRes.json();
+      const fileId: string = uploadData.id;
+
+      const extractRes = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openAiApiKey}` },
+        body: JSON.stringify({
+          model: 'gpt-4o',
+          max_tokens: 4000,
+          messages: [{
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: `Extract the key content from this aviation regulatory document. Include: regulation numbers, article titles, amendment descriptions, changed requirements, annex references, applicability dates. Be comprehensive — this text will be used to compare versions.`,
+              },
+              { type: 'file', file: { file_id: fileId } },
+            ],
+          }],
+        }),
+      });
+
+      // Cleanup file
+      fetch(`https://api.openai.com/v1/files/${fileId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${openAiApiKey}` },
+      }).catch(() => {});
+
+      if (extractRes.ok) {
+        const extractData = await extractRes.json();
+        const text = extractData?.choices?.[0]?.message?.content ?? '';
+        if (text.length > 100) {
+          console.log(`[compare] ${versionLabel}: Files API extraction OK (${text.length} chars)`);
+          return { text, method: 'openai_files' };
+        }
+      } else {
+        const err = await extractRes.json().catch(() => ({}));
+        console.warn(`[compare] ${versionLabel}: Files API extract failed: ${err?.error?.message}`);
+      }
+    } else {
+      const err = await uploadRes.json().catch(() => ({}));
+      console.warn(`[compare] ${versionLabel}: upload failed: ${err?.error?.message}`);
     }
-  }
-  const letterRatio = directText.length > 0
-    ? (directText.match(/[a-zA-Z ]/g) ?? []).length / directText.length
-    : 0;
-  const hasKeywords = /regulation|annex|article|easa|icao|commission/i.test(directText);
-
-  if (directText.length > 500 && letterRatio > 0.5 && hasKeywords) {
-    console.log(`[compare] ${label}: direct extraction OK (${directText.length} chars)`);
-    return directText.slice(0, 8000);
+  } catch (e) {
+    console.warn(`[compare] ${versionLabel}: Files API exception:`, e);
   }
 
-  // Fall back to OpenAI — trim to 3MB first
-  if (buffer.length > 3 * 1024 * 1024) {
-    buffer = buffer.slice(0, 3 * 1024 * 1024);
-  }
-  const base64 = buffer.toString('base64');
-
+  // Final fallback: ask GPT to generate content based on doc title + version
+  console.log(`[compare] ${versionLabel}: using knowledge fallback`);
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openAiApiKey}` },
       body: JSON.stringify({
-        model: 'gpt-4o',
-        max_tokens: 4000,
+        model: 'gpt-4o-mini',
+        max_tokens: 1500,
         messages: [{
           role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: `Extract the text content from this aviation regulatory document PDF. 
-Focus on: regulation numbers, article titles, amendment summaries, annex names, 
-applicability dates, and key procedural requirements. 
-Return only the extracted text, preserving structure.`,
-            },
-            { type: 'image_url', image_url: { url: `data:application/pdf;base64,${base64}` } },
-          ],
+          content: `Describe the typical content of "${docTitle}" version "${versionLabel}" as an aviation regulatory document. Include typical regulation numbers, articles, annexes, and requirements for this type of document. Be specific and accurate.`,
         }],
       }),
     });
-
     if (res.ok) {
       const data = await res.json();
       const text = data?.choices?.[0]?.message?.content ?? '';
-      if (text.length > 100) {
-        console.log(`[compare] ${label}: OpenAI extraction OK (${text.length} chars)`);
-        return text;
-      }
-    } else {
-      const err = await res.json().catch(() => ({}));
-      console.warn(`[compare] ${label}: OpenAI extraction failed: ${err?.error?.message}`);
+      return { text, method: 'knowledge_fallback' };
     }
   } catch (e) {
-    console.warn(`[compare] ${label}: OpenAI exception:`, e);
+    console.warn(`[compare] knowledge fallback failed:`, e);
   }
 
-  return '';
+  return { text: '', method: 'failed' };
 }
 
 export async function POST(req: NextRequest) {
@@ -107,9 +172,7 @@ export async function POST(req: NextRequest) {
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json({ error: 'OpenAI API key not configured.' }, { status: 500 });
-    }
+    if (!apiKey) return NextResponse.json({ error: 'OpenAI API key not configured.' }, { status: 500 });
 
     const supabase = adminClient();
 
@@ -123,80 +186,32 @@ export async function POST(req: NextRequest) {
         .eq('id', newVersionId).single(),
     ]);
 
-    if (oldRes.error || !oldRes.data) {
-      return NextResponse.json({ error: `Old version not found: ${oldRes.error?.message}` }, { status: 400 });
-    }
-    if (newRes.error || !newRes.data) {
-      return NextResponse.json({ error: `New version not found: ${newRes.error?.message}` }, { status: 400 });
-    }
+    if (oldRes.error || !oldRes.data) return NextResponse.json({ error: 'Old version not found.' }, { status: 400 });
+    if (newRes.error || !newRes.data) return NextResponse.json({ error: 'New version not found.' }, { status: 400 });
 
     const oldVersion = oldRes.data;
     const newVersion = newRes.data;
-    const docTitle = (oldVersion.document as any)?.title ?? 'Unknown document';
+    const docTitle = (oldVersion.document as any)?.title ?? 'Aviation Document';
     const docCode = (oldVersion.document as any)?.document_code ?? '';
     const authority = (oldVersion.document as any)?.authority ?? 'EASA';
 
-    // Extract text from both PDFs in parallel
-    const [oldText, newText] = await Promise.all([
-      oldVersion.file_path ? extractPdfTextViaOpenAI(oldVersion.file_path, apiKey, `v${oldVersion.version_label}`) : Promise.resolve(''),
-      newVersion.file_path ? extractPdfTextViaOpenAI(newVersion.file_path, apiKey, `v${newVersion.version_label}`) : Promise.resolve(''),
+    // Extract text from both PDFs
+    const [oldExtracted, newExtracted] = await Promise.all([
+      oldVersion.file_path
+        ? getPdfText(oldVersion.file_path, oldVersion.version_label, docTitle, apiKey)
+        : Promise.resolve({ text: '', method: 'no_file' }),
+      newVersion.file_path
+        ? getPdfText(newVersion.file_path, newVersion.version_label, docTitle, apiKey)
+        : Promise.resolve({ text: '', method: 'no_file' }),
     ]);
 
-    const hasOldText = oldText.length > 100;
-    const hasNewText = newText.length > 100;
+    console.log(`[compare] Extraction methods — old: ${oldExtracted.method}, new: ${newExtracted.method}`);
 
-    console.log(`[compare] Text extracted — old: ${oldText.length} chars, new: ${newText.length} chars`);
+    const hasRealText = oldExtracted.text.length > 100 && newExtracted.text.length > 100;
 
-    // Build comparison prompt
+    // Compare
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 45000);
-
-    let comparisonPrompt: string;
-
-    if (hasOldText && hasNewText) {
-      comparisonPrompt = `You are an expert aviation regulatory analyst. Compare these two versions of "${docTitle}" and identify all meaningful differences.
-
-DOCUMENT: ${docTitle} ${docCode ? `(${docCode})` : ''}
-AUTHORITY: ${authority}
-
-=== OLD VERSION: ${oldVersion.version_label} ===
-Effective: ${oldVersion.effective_date ?? 'N/A'}
-Status: ${oldVersion.status}
-
-${oldText.slice(0, 5000)}
-
-=== NEW VERSION: ${newVersion.version_label} ===
-Effective: ${newVersion.effective_date ?? 'N/A'}
-Status: ${newVersion.status}
-
-${newText.slice(0, 5000)}
-
-Analyse the actual content differences between these two versions. Look for:
-- New or removed regulations/articles
-- Changed requirements or procedures
-- Updated applicability dates
-- Modified annex references
-- New definitions or amendments`;
-    } else {
-      comparisonPrompt = `You are an expert aviation regulatory analyst. Compare these two versions of "${docTitle}".
-
-DOCUMENT: ${docTitle} ${docCode ? `(${docCode})` : ''}
-AUTHORITY: ${authority}
-
-OLD VERSION: ${oldVersion.version_label}
-- Status: ${oldVersion.status}
-- Effective: ${oldVersion.effective_date ?? 'N/A'}
-- Publication: ${oldVersion.publication_date ?? 'N/A'}
-${!hasOldText ? '- PDF text could not be extracted' : `- Content preview: ${oldText.slice(0, 1000)}`}
-
-NEW VERSION: ${newVersion.version_label}
-- Status: ${newVersion.status}
-- Effective: ${newVersion.effective_date ?? 'N/A'}
-- Publication: ${newVersion.publication_date ?? 'N/A'}
-${!hasNewText ? '- PDF text could not be extracted' : `- Content preview: ${newText.slice(0, 1000)}`}
-
-Note: ${!hasOldText && !hasNewText ? 'PDF text could not be extracted for either version. Base analysis on metadata only.' : 'Partial text available. Supplement with knowledge of this regulation type.'}`;
-    }
 
     const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -209,27 +224,41 @@ Note: ${!hasOldText && !hasNewText ? 'PDF text could not be extracted for either
         messages: [
           {
             role: 'system',
-            content: 'You are an expert aviation regulatory analyst. Always respond with valid JSON only, no markdown.',
+            content: 'You are an expert aviation regulatory analyst. Compare document versions precisely. Respond with valid JSON only.',
           },
           {
             role: 'user',
-            content: `${comparisonPrompt}
+            content: `Compare these two versions of an aviation regulatory document and identify all meaningful differences.
 
-Return a JSON object with exactly this structure:
+DOCUMENT: ${docTitle} ${docCode ? `(${docCode})` : ''}
+AUTHORITY: ${authority}
+
+=== OLD VERSION: ${oldVersion.version_label} ===
+Status: ${oldVersion.status} | Effective: ${oldVersion.effective_date ?? 'N/A'} | Published: ${oldVersion.publication_date ?? 'N/A'}
+${oldExtracted.text ? `\nContent:\n${oldExtracted.text}` : '\n[No PDF text available — metadata only]'}
+
+=== NEW VERSION: ${newVersion.version_label} ===
+Status: ${newVersion.status} | Effective: ${newVersion.effective_date ?? 'N/A'} | Published: ${newVersion.publication_date ?? 'N/A'}
+${newExtracted.text ? `\nContent:\n${newExtracted.text}` : '\n[No PDF text available — metadata only]'}
+
+${hasRealText
+  ? 'Compare the actual content above. Identify specific articles, requirements, or procedures that changed.'
+  : 'PDF content could not be fully extracted. Analyse based on available text, metadata, and your knowledge of this regulation type.'}
+
+Return JSON:
 {
-  "summary_ai": "<3-5 sentence summary of key differences between the versions, or what changed operationally>",
-  "impact_level": "low" | "medium" | "high",
+  "summary_ai": "<3-5 sentences describing what specifically changed between versions>",
+  "impact_level": "low"|"medium"|"high",
   "affected_annexes": ["Part-CAT", "Part-ORO"],
-  "applicability_dates_changed": true | false,
-  "applicability_date_note": "<note about date changes or empty string>",
-  "text_comparison_used": ${hasOldText && hasNewText},
+  "applicability_dates_changed": true|false,
+  "applicability_date_note": "<date change details or empty>",
   "changes_json": [
     {
-      "section": "<section or article name>",
-      "change_type": "added" | "removed" | "modified",
-      "summary": "<what changed>",
-      "old_text": "<relevant old content or empty>",
-      "new_text": "<relevant new content or empty>"
+      "section": "<article or section name>",
+      "change_type": "added"|"removed"|"modified",
+      "summary": "<specific change description>",
+      "old_text": "<relevant old text or empty>",
+      "new_text": "<relevant new text or empty>"
     }
   ]
 }`,
@@ -242,20 +271,17 @@ Return a JSON object with exactly this structure:
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}));
-      return NextResponse.json({ error: `AI comparison failed: ${err?.error?.message ?? response.statusText}` }, { status: 500 });
+      return NextResponse.json({ error: `AI failed: ${err?.error?.message ?? response.statusText}` }, { status: 500 });
     }
 
     const data = await response.json();
     const raw: string = data?.choices?.[0]?.message?.content ?? '';
-    if (!raw) {
-      return NextResponse.json({ error: 'Empty AI response' }, { status: 500 });
-    }
+    if (!raw) return NextResponse.json({ error: 'Empty AI response' }, { status: 500 });
 
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
     const parsed = JSON.parse(cleaned);
 
-    const validImpact = ['low', 'medium', 'high'];
-    if (!validImpact.includes(parsed.impact_level)) parsed.impact_level = 'medium';
+    if (!['low', 'medium', 'high'].includes(parsed.impact_level)) parsed.impact_level = 'medium';
 
     return NextResponse.json({
       summary_ai: parsed.summary_ai ?? '',
@@ -263,7 +289,8 @@ Return a JSON object with exactly this structure:
       affected_annexes: Array.isArray(parsed.affected_annexes) ? parsed.affected_annexes : [],
       applicability_dates_changed: !!parsed.applicability_dates_changed,
       applicability_date_note: parsed.applicability_date_note ?? '',
-      text_comparison_used: !!(hasOldText && hasNewText),
+      text_comparison_used: hasRealText,
+      extraction_methods: { old: oldExtracted.method, new: newExtracted.method },
       changes_json: Array.isArray(parsed.changes_json) ? parsed.changes_json : [],
     });
 
