@@ -102,9 +102,9 @@ const PRIORITY_KEYWORDS = [
   'eu 965',
 ];
 
-const CHUNK_SIZE = 6000;
+const CHUNK_SIZE = 12000;
 const CHUNK_OVERLAP = 500;
-const MAX_CHUNKS = 5; // safety cap — prevents runaway API calls on huge docs
+const MAX_CHUNKS = 20; // safety cap — prevents runaway API calls on huge docs
 
 /**
  * Split text into overlapping chunks of ~CHUNK_SIZE characters.
@@ -144,7 +144,7 @@ async function extractFromChunk(
       Authorization: `Bearer ${openAiApiKey}`,
     },
     body: JSON.stringify({
-      model: 'gpt-4o-mini',
+      model: 'gpt-4o',
       messages: [
         { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
         {
@@ -152,7 +152,7 @@ async function extractFromChunk(
           content: `Extract all regulations from the following EASA Air Operations document text:\n\n${chunk}`,
         },
       ],
-      max_tokens: 2000,
+      max_tokens: 4096,
     }),
   });
 
@@ -289,12 +289,7 @@ export async function extractAndStoreRegulations(
     let totalRawLength = 0;
     let allParseSuccess = true;
 
-    for (let _loopIdx = 0; _loopIdx < chunksToProcess.length; _loopIdx++) {
-      const { chunk, idx } = chunksToProcess[_loopIdx];
-      // Wait between chunks to stay within rate limits (free tier: 30k TPM)
-      if (_loopIdx > 0) {
-        await new Promise(resolve => setTimeout(resolve, 15000));
-      }
+    for (const { chunk, idx } of chunksToProcess) {
       const result = await extractFromChunk(chunk, openAiApiKey, idx);
       totalRawLength += result.rawLength;
       if (!result.parseSuccess) {

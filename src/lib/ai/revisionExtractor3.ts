@@ -74,7 +74,7 @@ export async function extractAndStoreRevisions(
         Authorization: `Bearer ${openAiApiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4o',
         messages: [
           { role: 'system', content: REVISION_EXTRACTION_SYSTEM_PROMPT },
           {
@@ -82,7 +82,7 @@ export async function extractAndStoreRevisions(
             content: `Extract the document publication revision history from the following EASA document text. Focus on the revision/amendment table near the beginning of the document:\n\n${documentText.slice(0, 10000)}`,
           },
         ],
-        max_tokens: 2000,
+        max_tokens: 2048,
       }),
     });
 
